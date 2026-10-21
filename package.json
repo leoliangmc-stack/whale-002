@@ -1,0 +1,20 @@
+{
+  "name": "whale-fall-living-abyss",
+  "private": true,
+  "version": "1.0.0",
+  "description": "鲸落：深海之境 Whale Fall: The Living Abyss — 2.5D 沉浸式网页互动体验",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "shots": "node scripts/screenshots.mjs"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.0",
+    "vite": "^6.4.5",
+    "vitest": "^2.1.9"
+  }
+}

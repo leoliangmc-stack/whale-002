@@ -6,6 +6,8 @@
 - 所有画面均为程序实时绘制，无需任何图片或音频文件；保留了正式资源的替换接口
 - 生产包约 196 KB JS（gzip 后约 70 KB）
 
+**在线体验：** https://leoliangmc-stack.github.io/whale-002/
+
 ---
 
 ## 1. 运行与构建
@@ -21,6 +23,10 @@ npm test             # 单元测试（Vitest，29 项）
 ```
 
 `dist/` 是纯静态文件，可直接部署到任意静态托管（构建使用相对路径 `base: './'`，放在子目录中也能运行）。
+
+### 部署到 GitHub Pages
+
+每次推送到 `main`，`.github/workflows/deploy-pages.yml` 会自动执行：安装依赖 → 运行单元测试 → 构建 → 把 `dist/` 发布到 `gh-pages` 分支，GitHub Pages 再从该分支上线（仓库 Settings → Pages 的来源为 `gh-pages` 分支、根目录）。测试不通过时不会发布。也可以在 Actions 页面手动运行这个工作流。
 
 ### 辅助脚本（需要 Playwright，环境中已有全局安装时会自动使用）
 

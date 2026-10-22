@@ -105,7 +105,7 @@ export class DiscoveryManager {
       this.hold('hidden-amphipod', frameH < 3.2 && this.onScreen(rc, this.W.x, this.W.y, w.state.z, 0.2), dt, 0.8);
     }
     if (!this.has('hidden-texture') && frameH < 1.25) {
-      const bone = w.skeleton.hitTest(rc, w.body, w.state, w.finAngle, rc.w / 2, rc.h / 2);
+      const bone = w.skeleton.hitTest(rc, w.body, w.state, w.finPose, rc.w / 2, rc.h / 2);
       this.hold('hidden-texture', !!bone, dt, 1);
     }
   }

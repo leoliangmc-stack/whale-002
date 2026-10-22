@@ -3,7 +3,7 @@ import { clamp, damp, lerp, rng, sampleProfile, TAU } from '../../core/math';
 import type { RenderCtx } from '../../core/types';
 import { WORLD } from '../../config/stages';
 import type { EcoState } from '../../systems/StoryTimeline';
-import { LOWER, LOWER_MAX, S_REF, UPPER, WHALE_LEN } from '../WhaleBody';
+import { restSpineDY, S_REF, UPPER, WHALE_LEN } from '../WhaleBody';
 
 /**
  * 深海生物的公共基类。
@@ -138,9 +138,8 @@ export abstract class Creature {
 export function carcassTop(x: number, shrink = 0): number {
   const s = S_REF - (x - REST_X) / WHALE_LEN;
   if (s < 0 || s > 1) return SEABED;
-  const lo = sampleProfile(LOWER, s);
   const up = sampleProfile(UPPER, s);
-  const spine = Y_REST + (LOWER_MAX - lo) * 0.82;
+  const spine = Y_REST + restSpineDY(s);
   return spine - up * (1 - 0.42 * shrink);
 }
 

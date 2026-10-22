@@ -127,7 +127,7 @@ const P = (page) => page.evaluate(() => window.__wf.app.progress.shown);
   await page.waitForFunction(() => window.__done === true);
   const snap = () => page.evaluate(() => {
     const a = window.__wf.app; const w = a.world.whale1; const b = w.body; const s = a.narrative.currentShot;
-    const v = [w.state.x, w.state.y, w.state.pitch, w.finAngle, w.finFarAngle, b.flukeAngle, s.tx, s.ty, s.frameH, s.elev];
+    const v = [w.state.x, w.state.y, w.state.pitch, w.finPose.a, w.finPose.len, w.finFarPose.a, b.flukeAngle, s.tx, s.ty, s.frameH, s.elev];
     for (let i = 0; i < b.n; i += 3) v.push(b.ux[i], b.uy[i], b.bx[i], b.by[i]);
     return { p: a.progress.shown, v };
   });

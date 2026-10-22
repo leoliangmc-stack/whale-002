@@ -1,0 +1,160 @@
+import { describe, expect, it } from 'vitest';
+import { secondsAt, WORLD } from '../src/config/stages';
+import { CONTACT_P } from '../src/systems/DescentMotion';
+import { StoryTimeline, Y_REST } from '../src/systems/StoryTimeline';
+import { Whale } from '../src/entities/Whale';
+import { REST_GROUND, restSpineDY, S_FIN, WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
+
+const tl = new StoryTimeline();
+
+/** 静卧姿态下的身体几何（局部坐标，+y 向下；海床在 y = REST_GROUND） */
+function restBody(rest = 1): WhaleBody {
+  const b = new WhaleBody();
+  b.compute({ swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest, flex: 0, nod: 0, fluke: 0, shrink: 0 });
+  return b;
+}
+
+/** s 处腹侧离海床的距离（负值为压入沉积物的深度） */
+function gapAt(b: WhaleBody, s: number): number {
+  const p = b.belly(s, { x: 0, y: 0 });
+  return REST_GROUND - p.y;
+}
+
+function maxGap(b: WhaleBody, s0: number, s1: number): number {
+  let m = -Infinity;
+  for (let s = s0; s <= s1 + 1e-9; s += 0.01) m = Math.max(m, gapAt(b, s));
+  return m;
+}
+
+describe('rest pose: weight and contact', () => {
+  const b = restBody();
+
+  it('the heavy chest and belly press into the soft sediment, but only a little', () => {
+    const sink = -Math.min(gapAt(b, 0.3), gapAt(b, 0.38), gapAt(b, 0.46));
+    expect(sink).toBeGreaterThan(0.12);
+    expect(sink).toBeLessThan(0.4);
+  });
+
+  it('no part of the body hovers evenly above the seabed', () => {
+    // 从下颌到尾端，最大的悬空只出现在尾柄下方那道拱形的缝隙里，而且不超过半米
+    expect(maxGap(b, 0.1, 1)).toBeLessThan(0.5);
+    // 下颌接近海床，吻端自然地微微翘起，但没有抬头
+    expect(gapAt(b, 0.1)).toBeLessThan(0.25);
+    expect(gapAt(b, 0.015)).toBeLessThan(0.9);
+  });
+
+  it('the tail stock arches down to the seabed, leaving a gap that narrows toward the fluke', () => {
+    const arch = maxGap(b, 0.62, 0.86);
+    expect(arch).toBeGreaterThan(0.2);
+    expect(Math.abs(gapAt(b, 1))).toBeLessThan(0.12);
+    expect(gapAt(b, 0.97)).toBeLessThan(arch - 0.15);
+  });
+
+  it('is gently curved, not a straight log, and head and tail are not on one line', () => {
+    const n = b.n;
+    // 脊线偏离吻端—尾端弦线的最大距离
+    const x0 = b.px[0];
+    const y0 = b.py[0];
+    const x1 = b.px[n - 1];
+    const y1 = b.py[n - 1];
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    let dev = 0;
+    for (let i = 0; i < n; i++) dev = Math.max(dev, Math.abs((x1 - x0) * (y0 - b.py[i]) - (x0 - b.px[i]) * (y1 - y0)) / len);
+    expect(dev).toBeGreaterThan(0.4);
+    expect(Math.abs(b.py[n - 1] - b.py[0])).toBeGreaterThan(0.4);
+  });
+
+  it('bends smoothly without kinks and without stretching the body', () => {
+    const n = b.n;
+    const dir = (i: number) => Math.atan2(b.py[i + 1] - b.py[i], b.px[i + 1] - b.px[i]);
+    const arcTo: number[] = [0];
+    for (let i = 1; i < n; i++) arcTo.push(arcTo[i - 1] + Math.hypot(b.px[i] - b.px[i - 1], b.py[i] - b.py[i - 1]));
+    // 任意 1 米长的一段脊线内，方向变化不超过约 10°（没有关节断裂般的折角）
+    let maxTurn = 0;
+    for (let i = 0; i < n - 1; i++) {
+      let j = i;
+      while (j < n - 2 && arcTo[j] - arcTo[i] < 1) j++;
+      const d = dir(j) - dir(i);
+      maxTurn = Math.max(maxTurn, Math.abs(Math.atan2(Math.sin(d), Math.cos(d))));
+    }
+    expect(maxTurn).toBeLessThan(0.18);
+    // 体长变化不超过 0.5%
+    expect(Math.abs(arcTo[n - 1] - WHALE_LEN) / WHALE_LEN).toBeLessThan(0.005);
+  });
+
+  it('settles in order: the belly first, then the head, the tail last', () => {
+    const reach = (s: number) => {
+      const full = restSpineDY(s, 1);
+      for (let r = 0; r <= 1; r += 0.005) if (Math.abs(restSpineDY(s, r) - full) < 0.1 * Math.abs(full)) return r;
+      return 1;
+    };
+    expect(reach(0.38)).toBeLessThan(reach(0.02));
+    expect(reach(0.02)).toBeLessThan(reach(0.95));
+  });
+});
+
+describe('rest pose: fins and fluke', () => {
+  const w = new Whale(1);
+  tl.whaleAt(0.54, w.state);
+  w.prepare();
+  const tip = (pose: typeof w.finPose, far: boolean) => {
+    const root = w.body.point(S_FIN, far ? -0.32 : -0.5, { x: 0, y: 0 });
+    const a = pose.a + pose.bend * 0.5;
+    return { x: root.x + 4.3 * pose.len * Math.cos(a), y: root.y + 4.3 * pose.len * Math.sin(a) };
+  };
+  const ground = WORLD.seabedY - w.state.y;
+
+  it('the two pectoral fins are not symmetric', () => {
+    expect(Math.abs(w.finPose.a - w.finFarPose.a)).toBeGreaterThan(0.15);
+    expect(Math.abs(w.finPose.wid - w.finFarPose.wid)).toBeGreaterThan(0.05);
+  });
+
+  it('the near fin rests on the sediment in front of the body; the far one stays behind it', () => {
+    const near = tip(w.finPose, false);
+    // 近侧鳍尖落在镜头一侧的海床上：侧视中略低于着地线，但不会“插进”海床
+    expect(near.y).toBeGreaterThan(ground);
+    expect(near.y).toBeLessThan(ground + 0.55);
+    const far = tip(w.finFarPose, true);
+    expect(far.y).toBeLessThan(ground);
+  });
+
+  it('a hanging fin is pushed back by the seabed while the whale is still approaching', () => {
+    const v = new Whale(1);
+    for (let p = 0.48; p <= 0.52; p += 0.0005) {
+      tl.whaleAt(p, v.state);
+      v.prepare();
+      const root = v.body.point(S_FIN, -0.5, { x: 0, y: 0 });
+      const a = v.finPose.a + v.finPose.bend * 0.5;
+      const lx = root.x + 4.3 * v.finPose.len * Math.cos(a);
+      const ly = root.y + 4.3 * v.finPose.len * Math.sin(a);
+      const wy = v.state.y + lx * Math.sin(v.state.pitch) + ly * Math.cos(v.state.pitch);
+      expect(wy, `p=${p.toFixed(4)}`).toBeLessThan(v.state.seabed + 0.52);
+    }
+  });
+});
+
+describe('landing timeline', () => {
+  it('rest builds up monotonically over several seconds after the first touch', () => {
+    let prev = -1;
+    for (let p = CONTACT_P - 0.002; p <= 0.53; p += 0.0005) {
+      const r = tl.evaluate(p, 0).whale1.rest;
+      expect(r).toBeGreaterThanOrEqual(prev - 1e-9);
+      prev = r;
+    }
+    const done = (() => {
+      for (let p = CONTACT_P; p < 0.55; p += 0.0002) if (tl.evaluate(p, 0).whale1.rest > 0.999) return p;
+      return 1;
+    })();
+    const secs = secondsAt(done) - secondsAt(CONTACT_P);
+    expect(secs).toBeGreaterThan(3.5);
+    expect(secs).toBeLessThan(7);
+    expect(tl.evaluate(0.53, 0).whale1.y).toBeCloseTo(Y_REST, 4);
+  });
+
+  it('the sediment cloud starts at touchdown and has settled before the time skip', () => {
+    expect(tl.evaluate(CONTACT_P - 0.001, 0).env.sediment).toBe(0);
+    expect(tl.evaluate(CONTACT_P + 0.002, 0).env.sediment).toBeGreaterThan(0);
+    // “数天后”出现时（0.553），沉降已基本结束（ParticleManager 在 13 秒后不再绘制）
+    expect(secondsAt(0.553) - secondsAt(CONTACT_P)).toBeGreaterThan(11);
+  });
+});

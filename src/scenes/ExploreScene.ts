@@ -83,7 +83,7 @@ export class ExploreScene {
     const c = world.creatures.hitTest(rc, sx, sy);
     if (c) return { info: c.info, target: c.target };
     const w = world.whale1;
-    const bone = w.skeleton.hitTest(rc, w.body, w.state, w.finAngle, sx, sy);
+    const bone = w.skeleton.hitTest(rc, w.body, w.state, w.finPose, sx, sy);
     if (bone) {
       const info = bone === 'chevron' ? 'vertebra' : bone === 'scapula' ? 'flipper' : bone;
       return { info, target: null };

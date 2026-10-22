@@ -2,7 +2,7 @@ import { hex, makeShade, mixRGB, rgba, shadeRGB, type RGB, type Shade } from '..
 import { clamp, hash1, lerp, rng, smoothstep, TAU } from '../core/math';
 import type { RenderCtx } from '../core/types';
 import { S_FIN, S_GAPE, WHALE_LEN, type WhaleBody } from './WhaleBody';
-import type { WhaleState } from './Whale';
+import type { FinPose, WhaleState } from './Whale';
 
 /**
  * 座头鲸骨骼（侧视）。所有骨骼都以同一条脊线定位：
@@ -444,13 +444,14 @@ export class WhaleSkeleton {
   }
 
   /** 把画布变换设置到某块骨骼的局部坐标（在鲸鱼局部变换之上）。 */
-  private place(ctx: CanvasRenderingContext2D, body: WhaleBody, st: WhaleState, b: Bone, finAngle: number, ground: number): void {
+  private place(ctx: CanvasRenderingContext2D, body: WhaleBody, st: WhaleState, b: Bone, fin: FinPose, ground: number): void {
     const c = st.collapse;
     if (b.finLocal) {
       body.point(S_FIN, -0.5, this.p);
       const groundDrop = Math.max(0, Math.min(b.drop * c + 0.4 * c, ground - this.p.y - 0.25));
       ctx.translate(this.p.x, this.p.y + groundDrop);
-      ctx.rotate(finAngle + 0.06 * c);
+      ctx.rotate(fin.a + fin.bend * 0.5 + 0.06 * c);
+      ctx.scale(fin.len, fin.wid);
       return;
     }
     body.frame(b.s, b.off, this.f);
@@ -468,7 +469,7 @@ export class WhaleSkeleton {
   }
 
   /** 与 place() 相同的骨骼变换（鲸鱼局部坐标），用于构建几何缓存。 */
-  private matrixFor(body: WhaleBody, st: WhaleState, b: Bone, finAngle: number, ground: number): DOMMatrix {
+  private matrixFor(body: WhaleBody, st: WhaleState, b: Bone, fin: FinPose, ground: number): DOMMatrix {
     const c = st.collapse;
     const m = new DOMMatrix();
     const DEG = 180 / Math.PI;
@@ -476,7 +477,8 @@ export class WhaleSkeleton {
       body.point(S_FIN, -0.5, this.p);
       const groundDrop = Math.max(0, Math.min(b.drop * c + 0.4 * c, ground - this.p.y - 0.25));
       m.translateSelf(this.p.x, this.p.y + groundDrop);
-      m.rotateSelf((finAngle + 0.06 * c) * DEG);
+      m.rotateSelf((fin.a + fin.bend * 0.5 + 0.06 * c) * DEG);
+      m.scaleSelf(fin.len, fin.wid);
       return m;
     }
     body.frame(b.s, b.off, this.f);
@@ -510,8 +512,8 @@ export class WhaleSkeleton {
     poreN: number;
   } | null = null;
 
-  private ensureCache(body: WhaleBody, st: WhaleState, finAngle: number, ground: number, n: number): NonNullable<WhaleSkeleton['cache']> {
-    const key = `${n}|${st.collapse.toFixed(3)}|${finAngle.toFixed(3)}|${st.rest.toFixed(2)}|${st.flex.toFixed(3)}|${st.nod.toFixed(3)}`;
+  private ensureCache(body: WhaleBody, st: WhaleState, fin: FinPose, ground: number, n: number): NonNullable<WhaleSkeleton['cache']> {
+    const key = `${n}|${st.collapse.toFixed(3)}|${(fin.a + fin.bend * 0.5).toFixed(3)}|${fin.len.toFixed(3)}|${fin.wid.toFixed(3)}|${st.rest.toFixed(2)}|${st.flex.toFixed(3)}|${st.nod.toFixed(3)}`;
     if (this.cache && this.cache.key === key) return this.cache;
     const far = new Path2D();
     const column = new Path2D();
@@ -522,7 +524,7 @@ export class WhaleSkeleton {
     const poreList: number[] = [];
     const pt = new DOMPoint();
     for (const b of this.bones) {
-      const m = this.matrixFor(body, st, b, finAngle, ground);
+      const m = this.matrixFor(body, st, b, fin, ground);
       if (b.kind === 'skull' || b.kind === 'scapula' || (b.kind === 'mandible' && !b.far)) big.push({ b, m });
       else if (b.far) far.addPath(b.path, m);
       else if (b.kind === 'vertebra' || b.kind === 'chevron') column.addPath(b.path, m);
@@ -558,14 +560,14 @@ export class WhaleSkeleton {
     return this.cache;
   }
 
-  draw(rc: RenderCtx, body: WhaleBody, st: WhaleState, finAngle: number): void {
+  draw(rc: RenderCtx, body: WhaleBody, st: WhaleState, fin: FinPose): void {
     this.build(rc.quality.vertebrae);
     const ctx = rc.ctx;
     const vis = st.visible * smoothstep(1, 0.93, st.tissue);
     if (vis <= 0.001) return;
     this.computeColors(rc, st);
     const ground = st.rest > 0.5 ? 1.74 : 99;
-    const cache = this.ensureCache(body, st, finAngle, ground, rc.quality.vertebrae);
+    const cache = this.ensureCache(body, st, fin, ground, rc.quality.vertebrae);
     const scale = rc.cam.applyTransform(ctx, rc.dpr, st.x, st.y, st.z, st.pitch);
     ctx.globalAlpha = vis;
     ctx.lineJoin = 'round';
@@ -849,7 +851,7 @@ export class WhaleSkeleton {
   }
 
   /** 屏幕坐标命中测试（自由探索中的点击）。 */
-  hitTest(rc: RenderCtx, body: WhaleBody, st: WhaleState, finAngle: number, sx: number, sy: number): BoneKind | null {
+  hitTest(rc: RenderCtx, body: WhaleBody, st: WhaleState, fin: FinPose, sx: number, sy: number): BoneKind | null {
     if (st.tissue > 0.5) return null;
     this.build(rc.quality.vertebrae);
     const ctx = rc.ctx;
@@ -859,7 +861,7 @@ export class WhaleSkeleton {
       const b = this.bones[i];
       ctx.save();
       rc.cam.applyTransform(ctx, rc.dpr, st.x, st.y, st.z, st.pitch);
-      this.place(ctx, body, st, b, finAngle, ground);
+      this.place(ctx, body, st, b, fin, ground);
       ctx.lineWidth = 0.15;
       if (ctx.isPointInPath(b.path, sx * rc.dpr, sy * rc.dpr) || ctx.isPointInStroke(b.path, sx * rc.dpr, sy * rc.dpr)) hit = b.kind;
       ctx.restore();

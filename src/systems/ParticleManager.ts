@@ -3,6 +3,7 @@ import { hash1, mod, smoothstep, TAU } from '../core/math';
 import { textures } from '../core/textures';
 import type { RenderCtx } from '../core/types';
 import type { QualitySettings } from '../config/performance';
+import { S_REF, WHALE_LEN } from '../entities/WhaleBody';
 
 /**
  * ParticleManager：漂浮颗粒（海洋雪）、着陆时扬起的沉积物、海面喷气水雾与气泡。
@@ -186,40 +187,58 @@ export class ParticleManager {
     ctx.globalCompositeOperation = 'source-over';
   }
 
-  /** 鲸鱼接触海床时扬起的柔和沉积物云。progress 0~1 对应约 11 秒。 */
-  drawSediment(rc: RenderCtx, progress: number, cx: number, seabedY: number): void {
-    if (progress <= 0 || progress >= 1) return;
+  /**
+   * 鲸鱼落上海床时被挤起的细沉积物。t 为接触后的秒数，x 为静卧时鲸鱼参考点的世界 x。
+   *
+   * 不是一团向外喷射的烟雾，而是贴着海床、慢慢向两侧“流”出去的一层薄雾：
+   *  - 从最先接触的胸腹部开始，沿着腹部依次被挤出；尾部最后落下时只有一小股；
+   *  - 颗粒贴近海床、只升起不到一米，向外的速度很快被水阻耗尽，随后悬浮、缓缓沉降；
+   *  - 身体后方（z>0）的颗粒在鲸鱼之前绘制（behind=true），前方的在之后绘制。
+   * 位置是 t 的解析函数，可以完美倒放。
+   */
+  drawSediment(rc: RenderCtx, t: number, x: number, seabedY: number, behind: boolean): void {
+    if (t <= 0 || t >= 13) return;
     const { ctx, cam, dpr } = rc;
-    const T = progress * 11;
     const n = rc.quality.sediment;
     const sh = this.sh;
-    rc.light.shadeAt(cx, seabedY, 0, sh);
+    rc.light.shadeAt(x, seabedY, 0, sh);
     const tex = this.sandDot(shadeRGB(SAND, sh, this.tmpC, 0.35));
-    const P = { x: 0, y: 0, s: 0 };
+    const P = this.wp;
     ctx.globalCompositeOperation = 'source-over';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     for (let i = 0; i < n; i++) {
-      const r1 = hash1(i * 5 + 1);
-      const r2 = hash1(i * 5 + 2);
-      const r3 = hash1(i * 5 + 3);
-      const r4 = hash1(i * 5 + 4);
-      const x0 = cx - 7 + r1 * 13;
-      const z0 = (r2 - 0.5) * 4;
-      const side = x0 < cx - 1 ? -1 : 1;
-      const vx = side * (0.6 + r3 * 2.4);
-      const vy = 0.25 + r4 * 1.1;
-      const vz = (r2 - 0.5) * 2.5;
-      const tau = 1.6;
-      const e = 1 - Math.exp(-T / tau);
-      const x = x0 + vx * tau * e + Math.sin(T * 0.3 + i) * 0.2 * T * 0.2;
-      const y = Math.min(seabedY - 0.05, seabedY - 0.1 - vy * tau * e + 0.012 * T * T);
-      const z = z0 + vz * tau * e;
-      if (!cam.project(x, y, z, P)) continue;
-      const size = (0.35 + r3 * 0.5 + T * 0.18) * P.s;
-      const a = 0.32 * smoothstep(0, 0.4, T) * (1 - smoothstep(4, 11, T)) * (0.5 + r4 * 0.5);
-      if (a < 0.01) continue;
+      const h = (k: number) => hash1(i * 11 + k);
+      const tail = h(1) < 0.16;
+      // 沿身体的位置（体长比例）与被挤出的时刻：前腹先触底，接触沿腹部向两端扩展；尾部最后
+      const sv = tail ? 0.84 + h(2) * 0.16 : 0.13 + h(2) * 0.47;
+      const t0 = tail ? 2.5 + h(3) * 0.9 : 0.1 + Math.abs(sv - 0.32) * 2.4 + h(3) * 0.35;
+      const tau = t - t0;
+      if (tau <= 0) continue;
+      const side = h(4) < 0.5 ? -1 : 1;
+      if (behind !== side > 0) continue;
+      const half = tail ? 0.35 : 0.9 + 0.4 * Math.sin(Math.PI * Math.min(1, (sv - 0.1) / 0.55));
+      // 向外的初速度很快被水阻耗尽（τ≈1.8 s）；身体两端的颗粒也向前 / 向后流出一些
+      const v = (tail ? 0.35 : 0.45) + h(5) * 0.6;
+      const ends = sv < 0.2 ? 0.7 : tail ? -0.6 : 0;
+      const dirX = (h(6) - 0.5) * 0.9 + ends;
+      const dirZ = side * (0.7 + 0.3 * h(7));
+      const e = 1 - Math.exp(-tau / 1.8);
+      const reach = v * 1.8 * e + 0.06 * tau;
+      const x0 = x + WHALE_LEN * (S_REF - sv) + (h(8) - 0.5) * 0.4;
+      const px = x0 + dirX * reach + Math.sin(tau * 0.31 + i) * 0.04 * tau;
+      const pz = side * half + dirZ * reach;
+      // 贴着海床：只升起几十厘米，随后缓慢沉降
+      const rise = (0.2 + 0.85 * h(9) * h(9)) * (1 - Math.exp(-tau / 1.1));
+      const fall = 0.03 * Math.pow(Math.max(0, tau - 2.5), 1.25);
+      const py = Math.min(seabedY - 0.06, seabedY - 0.08 - rise + fall);
+      if (!cam.project(px, py, pz, P)) continue;
+      const size = (0.35 + 0.4 * h(10) + 0.5 * (1 - Math.exp(-tau / 4))) * P.s;
+      const a =
+        (tail ? 0.13 : 0.19) * smoothstep(0, 0.6, tau) * (1 - smoothstep(4, 11 - 2.5 * h(3), tau)) * (0.45 + 0.55 * h(11)) *
+        (1 - 0.5 * smoothstep(0.6, 1.4, rise + 0.08 - fall));
+      if (a < 0.006 || size < 0.5) continue;
       ctx.globalAlpha = a;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.drawImage(tex, P.x - size, P.y - size * 0.7, size * 2, size * 1.4);
+      ctx.drawImage(tex, P.x - size, P.y - size * 0.55, size * 2, size * 1.1);
     }
     ctx.globalAlpha = 1;
   }
@@ -338,10 +357,12 @@ export class ParticleManager {
     }
     const g = this.sandTex.getContext('2d')!;
     g.clearRect(0, 0, 48, 48);
+    // 高斯衰减：大量半透明颗粒叠加时不会出现一圈圈的边缘
     const rg = g.createRadialGradient(24, 24, 0, 24, 24, 24);
-    rg.addColorStop(0, `rgba(${key},0.9)`);
-    rg.addColorStop(0.5, `rgba(${key},0.4)`);
-    rg.addColorStop(1, `rgba(${key},0)`);
+    for (let i = 0; i <= 8; i++) {
+      const t = i / 8;
+      rg.addColorStop(t, `rgba(${key},${(0.9 * (Math.exp(-3.5 * t * t) - Math.exp(-3.5))) / (1 - Math.exp(-3.5))})`);
+    }
     g.fillStyle = rg;
     g.fillRect(0, 0, 48, 48);
     this.sandKey = key;

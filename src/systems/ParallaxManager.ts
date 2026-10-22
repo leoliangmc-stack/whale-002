@@ -46,9 +46,13 @@ export class ParallaxManager {
       lap('ground');
       krill.draw(rc, 'behind', 0.5);
       lap('krillBehind');
+      // 着陆扬起的沉积物：身体后方的部分在鲸鱼之前
+      particles.drawSediment(rc, r.sediment, whale1.state.x, WORLD.seabedY, true);
       const whales = whale2.state.z > whale1.state.z ? [whale2, whale1] : [whale1, whale2];
       for (const w of whales) {
         if (!w.onScreen(rc)) continue;
+        // 海床上的接触阴影在身体之前绘制（被身体遮住的部分自然看不见）
+        w.drawContact(rc);
         w.drawInterior(rc);
         if (r.feeding === w) krill.draw(rc, 'captured');
         w.draw(rc);
@@ -58,7 +62,7 @@ export class ParallaxManager {
       lap('creaturesMid');
 
       // ---------------- 前景层
-      particles.drawSediment(rc, r.sediment, WORLD.restX, WORLD.seabedY);
+      particles.drawSediment(rc, r.sediment, whale1.state.x, WORLD.seabedY, false);
       if (r.breath2 > 0 && r.breath2 < 1) {
         const P = { x: 0, y: 0 };
         whale1.blowholePoint(P);

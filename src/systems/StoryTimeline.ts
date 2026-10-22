@@ -3,7 +3,7 @@ import { clamp, lerp, smoothstep } from '../core/math';
 import { makeTracks, Track, type Keys, type TrackSet } from '../core/Track';
 import { CAPTIONS, secondsAt, stageAt, TIME_LABELS, WORLD, type Caption, type StageDef } from '../config/stages';
 import { makeWhaleState, type WhaleState } from '../entities/Whale';
-import { DESCENT_START, DescentMotion, makeDescentSample } from './DescentMotion';
+import { CONTACT_P, DESCENT_START, DescentMotion, makeDescentSample } from './DescentMotion';
 
 /**
  * StoryTimeline：把 storyProgress 映射为整个世界的状态。
@@ -59,7 +59,7 @@ export interface EnvState {
   focusLight: number;
   bioGlow: number;
   vignette: number;
-  /** 着陆扬起的沉积物云 0~1 */
+  /** 着陆扬起的沉积物：接触海床后的秒数（之前为 0） */
   sediment: number;
 }
 
@@ -120,7 +120,7 @@ export interface StoryFrame {
 type DescentField = 'beat' | 'beatPh' | 'flex' | 'nod' | 'fluke' | 'finN' | 'finF';
 const DESCENT_FIELDS: DescentField[] = ['beat', 'beatPh', 'flex', 'nod', 'fluke', 'finN', 'finF'];
 
-const whaleKeys: Record<keyof Omit<WhaleState, 'visible' | DescentField>, Keys> = {
+const whaleKeys: Record<keyof Omit<WhaleState, 'visible' | 'seabed' | DescentField>, Keys> = {
   // 开场：从远处缓缓游来（约 2 m/s），接近磷虾群时减速
   x: [
     [-0.13, -104], [-0.1, -97], [-0.07, -88], [-0.035, -70], [0, -52.4], [0.014, -43], [0.03, -33], [0.047, -23],
@@ -150,8 +150,8 @@ const whaleKeys: Record<keyof Omit<WhaleState, 'visible' | DescentField>, Keys> 
   life: [[-0.13, 1], [0.255, 1], [0.3, 0], [0.88, 0]],
   tissue: [[-0.13, 1], [0.555, 1], [0.58, 0.92], [0.605, 0.8], [0.63, 0.64], [0.655, 0.46], [0.68, 0.26], [0.7, 0.08], [0.715, 0], [0.88, 0]],
   collapse: [[-0.13, 0], [0.6, 0], [0.66, 0.3], [0.72, 0.75], [0.78, 1], [0.88, 1]],
-  // 腹部接触海床后，身体在数秒内顺着海床放平
-  rest: [[-0.13, 0], [0.497, 0], [0.508, 1], [0.88, 1]],
+  // 腹部接触海床后的约 5 秒：胸腹部先压进软泥，头部随后放低，尾部最后落下（见 WhaleBody.restSpineDY）
+  rest: [[-0.13, 0], [0.497, 0], [0.5006, 0.3], [0.5041, 0.56], [0.5077, 0.76], [0.5118, 0.9], [0.5178, 1], [0.88, 1]],
   mats: [[-0.13, 0], [0.665, 0], [0.72, 0.4], [0.77, 0.85], [0.8, 1], [0.88, 1]],
   osedax: [[-0.13, 0], [0.64, 0], [0.7, 0.5], [0.76, 0.9], [0.8, 1], [0.88, 1]],
   burial: [[-0.13, 0], [0.68, 0], [0.8, 0.35], [0.88, 0.4]],
@@ -236,10 +236,12 @@ const CAM_ROWS: CamRow[] = [
   [0.43, 1, 0, 0, -0.5, 0.8, 45, 33, 0.5, 0.47, 3.6, -1, 0, 0],
   [0.455, 1, 0, 0, 0, 1, 42, 31, 0.5, 0.46, 4, -0.5, 0, 0],
   [0.478, 1, 0, 0, 0, 1.4, 34, 27, 0.5, 0.45, 4.8, 0, 0, 0],
-  [0.497, 1, 0, 0, 0, 1.4, 28.5, 24, 0.5, 0.46, 5.4, 0, 0, 0],
-  [0.52, 1, 0, 0, 0, 1.2, 25, 22, 0.5, 0.48, 5.5, 0, 0, 0],
-  [0.55, 1, 0, 0, -0.5, 1, 24, 22, 0.5, 0.5, 6, 1, 0, 0],
-  [0.585, 1, 0, 0, -0.5, 0.8, 22, 21, 0.5, 0.52, 5, 2, 0, 0],
+  // 着陆：缓慢推近为斜侧面中远景——镜头略高于海床，同时看清背部轮廓、侧面与腹部的接触；
+  // 构图中心放在吻端与尾叶之间（参考点后方约 2 米），头尾都完整留在画面内
+  [0.497, 1, 0, 0, -0.8, 1.3, 26.5, 24, 0.5, 0.47, 5.0, 0, 0, 0],
+  [0.52, 1, 0, 0, -1.6, 1.0, 20.5, 21.5, 0.5, 0.5, 4.4, 0.6, 0, 0],
+  [0.55, 1, 0, 0, -1.9, 0.9, 19, 21, 0.5, 0.51, 4.2, 1.2, 0, 0],
+  [0.585, 1, 0, 0, -1.2, 0.8, 19.5, 20.5, 0.5, 0.52, 4.5, 2, 0, 0],
   [0.625, 1, 0, 0, 1.5, 0.5, 18, 18, 0.5, 0.52, 4, 1, 0, 0],
   [0.665, 1, 0, 0, 0, 0.6, 21, 20, 0.5, 0.52, 5.5, -1, 0, 0],
   [0.7, 1, 0, 0, 0, 0.5, 23, 21, 0.5, 0.52, 6, 0, 0, 0],
@@ -308,7 +310,6 @@ export class StoryTimeline {
   private readonly surfT = makeTracks(surfaceKeys, { mode: 'linear' });
   private readonly altT = new Track(surfaceKeys.alt, { mode: 'smooth' });
   private readonly rotT = new Track(surfaceKeys.rot, { mode: 'smooth' });
-  private readonly sedT = new Track([[0, 0], [0.497, 0], [0.56, 1]], { mode: 'linear' });
   readonly descent = StoryTimeline.makeDescent(this.whaleT);
   private readonly dsc = makeDescentSample();
   private readonly wo = { x: 0, y: 0 };
@@ -353,12 +354,14 @@ export class StoryTimeline {
     const t = this.whaleT;
     for (const k in t) (out as unknown as Record<string, number>)[k] = t[k as keyof typeof t].at(u);
     out.visible = 1;
+    out.seabed = WORLD.seabedY;
     if (DescentMotion.covers(u)) {
       const d = this.descent.sample(u, this.dsc);
       out.x = d.x;
       out.y = d.y;
       out.pitch = d.pitch;
       for (const k of DESCENT_FIELDS) out[k] = d[k];
+      out.seabed += this.descent.seabedShift(u, this.wo).y;
     } else {
       for (const k of DESCENT_FIELDS) out[k] = 0;
     }
@@ -452,7 +455,7 @@ export class StoryTimeline {
     e.focusLight = this.envT.focusLight.at(p);
     e.bioGlow = this.envT.bioGlow.at(p);
     e.vignette = this.envT.vignette.at(p);
-    e.sediment = this.sedT.at(p);
+    e.sediment = p > CONTACT_P && p < 0.57 ? secondsAt(p) - secondsAt(CONTACT_P) : 0;
 
     const eco = f.eco;
     for (const k in this.ecoT) (eco as unknown as Record<string, number>)[k] = clamp(this.ecoT[k as keyof EcoState].at(p));

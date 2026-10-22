@@ -30,6 +30,23 @@ export function softDot(size = 64, hardness = 0.0, color = '255,255,255'): Tex {
   return c;
 }
 
+/**
+ * 接触阴影：高斯衰减的深色软斑（中心不透明、边缘完全消失、没有可见的圆边），
+ * 叠加成鲸鱼、鳍与尾叶在海床上的分区域软阴影。
+ */
+export function softShadow(size = 64, color = '3,7,13'): Tex {
+  const [c, ctx] = makeCanvas(size, size);
+  const r = size / 2;
+  const g = ctx.createRadialGradient(r, r, 0, r, r, r);
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8;
+    g.addColorStop(t, `rgba(${color},${(Math.exp(-3.2 * t * t) - Math.exp(-3.2)) / (1 - Math.exp(-3.2))})`);
+  }
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  return c;
+}
+
 /** 团状水雾（多个软圆叠加的不规则云团）。 */
 export function mistPuff(size = 96, seed = 1): Tex {
   const [c, ctx] = makeCanvas(size, size);
@@ -300,6 +317,7 @@ export interface TextureSet {
   ray: Tex;
   hole: Tex;
   skinDetail: Tex;
+  shadow: Tex;
 }
 
 let cached: TextureSet | null = null;
@@ -319,6 +337,7 @@ export function textures(): TextureSet {
     ray: rayTexture(),
     hole: holeDot(),
     skinDetail: skinDetailTile(),
+    shadow: softShadow(),
   };
   return cached;
 }

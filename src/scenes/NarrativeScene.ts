@@ -4,6 +4,8 @@ import type { RenderCtx } from '../core/types';
 import type { CameraController } from '../controllers/CameraController';
 import { StoryProgressController } from '../controllers/StoryProgressController';
 import { StoryTimeline, WHALE_SWITCH, type StoryFrame } from '../systems/StoryTimeline';
+import { DescentMotion } from '../systems/DescentMotion';
+import { WORLD } from '../config/stages';
 import type { World } from './World';
 
 /**
@@ -26,7 +28,9 @@ export class NarrativeScene {
     private readonly world: World,
     private readonly camera: CameraController,
     private readonly progress: StoryProgressController,
-  ) {}
+  ) {
+    world.creatures.setDescent(world.timeline.descent);
+  }
 
   update(rc: RenderCtx, dt: number, frozen = false): StoryFrame {
     const { world, camera, progress } = this;
@@ -81,6 +85,28 @@ export class NarrativeScene {
     world.seabed.enrich = f.eco.enrich;
     world.seabed.mats = w1.state.mats;
     world.seabed.focusX = w1.state.x;
+    // 下沉途中，海床随水体参照系移动，并且只在鲸鱼接近时才从幽暗中显现
+    const sb = world.timeline.descent.seabedShift(p, this.tmp);
+    world.seabed.shiftX = sb.x;
+    world.seabed.shiftY = sb.y;
+    world.seabed.reveal = DescentMotion.covers(p) ? 1 - smoothstep(8, 28, WORLD.seabedY + sb.y - (w1.state.y + 1.75)) : 1;
+
+    // 水体参照系：海洋雪与途中的生物随水体漂移；鲸鱼身体经过时推开附近的颗粒
+    const water = f.water;
+    const pm = world.particles;
+    pm.waterX = water.x;
+    pm.waterY = water.y;
+    const wk = pm.wake;
+    wk.amt = water.wake;
+    if (wk.amt > 0) {
+      w1.toWorld(-1.1, 0.15, this.tmp);
+      wk.x = this.tmp.x;
+      wk.y = this.tmp.y;
+      wk.z = w1.state.z;
+      wk.pitch = w1.state.pitch;
+      wk.vx = water.flowX;
+      wk.vy = water.flowY;
+    }
 
     const cu = { mode: 'story' as const, p, eco: f.eco, camY: camera.cam.cy, dt: frozen ? dt * 0.25 : dt, time: rc.time, reduced: rc.reducedMotion };
     if (this.warm > 0) {

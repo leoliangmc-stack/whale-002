@@ -1,0 +1,244 @@
+import { describe, expect, it } from 'vitest';
+import { secondsAt, WORLD } from '../src/config/stages';
+import { CONTACT_P, DESCENT_END, DESCENT_START, DescentMotion, lowestBelow } from '../src/systems/DescentMotion';
+import { StoryTimeline, Y_REST } from '../src/systems/StoryTimeline';
+import { S_REF, WHALE_LEN } from '../src/entities/WhaleBody';
+
+const tl = new StoryTimeline();
+const d = tl.descent;
+const whale = (p: number) => ({ ...tl.evaluate(p, -0.05).whale1 });
+const flow = (p: number) => ({ ...tl.evaluate(p, -0.05).water });
+const SNOUT = WHALE_LEN * S_REF;
+const TAIL = WHALE_LEN * (1 - S_REF);
+
+/** 以故事时间（自动播放的秒数）为步长扫描 [p0, p1] */
+function sweep(p0: number, p1: number, dt = 1 / 20): Array<{ p: number; t: number }> {
+  const out: Array<{ p: number; t: number }> = [];
+  const t0 = secondsAt(p0);
+  const t1 = secondsAt(p1);
+  let p = p0;
+  for (let t = t0; t <= t1; t += dt) {
+    while (secondsAt(p) < t && p < p1) p += 1e-6;
+    out.push({ p, t });
+  }
+  return out;
+}
+
+/** 第一个满足条件的进度 */
+function first(p0: number, p1: number, f: (p: number) => boolean): number {
+  for (let p = p0; p <= p1; p += 1e-4) if (f(p)) return p;
+  return NaN;
+}
+
+const pStop = first(0.3, DESCENT_END, (p) => whale(p).beat < 0.02);
+const pSink = first(0.3, DESCENT_END, (p) => flow(p).flowY > 0.3);
+
+describe('descent A: stops swimming before it sinks', () => {
+  it('the last tail strokes fade in amplitude and slow in frequency', () => {
+    let prev = Infinity;
+    for (let p = 0.298; p <= pStop; p += 5e-4) {
+      const b = whale(p).beat;
+      expect(b).toBeLessThanOrEqual(prev + 1e-9);
+      prev = b;
+    }
+    const freq = (p: number) => {
+      const e = 5e-4;
+      return (whale(p + e).beatPh - whale(p - e).beatPh) / (secondsAt(p + e) - secondsAt(p - e)) / (2 * Math.PI);
+    };
+    expect(freq(0.316)).toBeLessThan(freq(0.3) * 0.85);
+    expect(freq(0.3)).toBeLessThan(0.2);
+  });
+
+  it('stopping and sinking never happen in the same moment', () => {
+    expect(pStop).toBeGreaterThan(0.3);
+    expect(flow(pStop).flowY).toBeLessThan(0.1);
+    // 摆动停止后至少 4 秒才开始明显下沉
+    expect(secondsAt(pSink) - secondsAt(pStop)).toBeGreaterThan(4);
+  });
+
+  it('keeps gliding forward on its own inertia and stays nearly level', () => {
+    const t = secondsAt(pStop);
+    const later = sweep(pStop, 0.34).find((s) => s.t >= t + 3)!.p;
+    expect(whale(later).x - whale(0.304).x).toBeGreaterThan(1);
+    expect(Math.abs(whale(pStop).pitch)).toBeLessThan(0.03);
+  });
+});
+
+describe('descent B: slowly loses its balance', () => {
+  it('the head dips first while the tail keeps its height, then the body follows', () => {
+    // 只比较相对水体的位置（去掉被压缩的深度）
+    const vis = (p: number) => d.waterDepth(p) - whale(p).y;
+    const snout = (p: number) => whale(p).y + SNOUT * Math.sin(whale(p).pitch) + vis(p);
+    const tail = (p: number) => whale(p).y - TAIL * Math.sin(whale(p).pitch) + vis(p);
+    const p0 = first(0.315, 0.4, (p) => whale(p).pitch > 0.005);
+    const s0 = snout(p0);
+    const t0 = tail(p0);
+    // 头部先沉下 1 米：尾部几乎还在原来的高度
+    const p1 = first(p0, 0.4, (p) => snout(p) - s0 > 1);
+    expect(Math.abs(tail(p1) - t0)).toBeLessThan(0.3);
+    // 这一步是缓慢的（数秒），而不是一下子翻过去
+    expect(secondsAt(p1) - secondsAt(p0)).toBeGreaterThan(3);
+    // 低头先于明显的下沉
+    expect(p1).toBeLessThan(pSink + 0.002);
+    // 随后整个身体跟随下沉
+    const p2 = sweep(p1, 0.4).find((x) => x.t >= secondsAt(p1) + 5)!.p;
+    expect(tail(p2) - t0).toBeGreaterThan(1);
+    expect(snout(p2) - tail(p2)).toBeGreaterThan(snout(p0) - tail(p0) + 1);
+  });
+});
+
+describe('descent C/D: steady, heavy sinking', () => {
+  const samples = sweep(0.322, CONTACT_P);
+
+  it('sinking speed builds smoothly from zero and levels off', () => {
+    let vmax = 0;
+    let amax = 0;
+    for (let i = 1; i < samples.length; i++) {
+      const a = flow(samples[i - 1].p).flowY;
+      const b = flow(samples[i].p).flowY;
+      amax = Math.max(amax, Math.abs(b - a) / (samples[i].t - samples[i - 1].t));
+      vmax = Math.max(vmax, b);
+    }
+    expect(flow(0.322).flowY).toBeLessThan(0.1);
+    expect(amax).toBeLessThan(0.3);
+    expect(vmax).toBeGreaterThan(1.5);
+    expect(vmax).toBeLessThan(2.5);
+    // 不会一直加速：深海段的速度不超过稳定段
+    expect(flow(0.44).flowY).toBeLessThanOrEqual(flow(0.38).flowY + 1e-6);
+  });
+
+  it('posture changes slowly, never flips, and does not keep rocking', () => {
+    let reversals = 0;
+    let dir = 0;
+    let ext = whale(0.37).pitch;
+    for (let i = 1; i < samples.length; i++) {
+      const w = whale(samples[i].p);
+      const prev = whale(samples[i - 1].p);
+      expect(Math.abs(w.pitch)).toBeLessThan(0.22);
+      expect(Math.abs(w.pitch - prev.pitch) / (samples[i].t - samples[i - 1].t)).toBeLessThan(0.035);
+      expect(Math.abs(w.flex)).toBeLessThan(0.35);
+      expect(Math.abs(w.nod)).toBeLessThan(0.06);
+      expect(Math.abs(w.fluke)).toBeLessThan(0.25);
+      for (const f of [w.finN, w.finF]) {
+        expect(f).toBeGreaterThan(-0.15);
+        expect(f).toBeLessThan(0.5);
+      }
+      if (samples[i].p > 0.37) {
+        const dp = w.pitch - ext;
+        if (dir >= 0 && dp < -0.003) {
+          if (dir > 0) reversals++;
+          dir = -1;
+          ext = w.pitch;
+        } else if (dir <= 0 && dp > 0.003) {
+          if (dir < 0) reversals++;
+          dir = 1;
+          ext = w.pitch;
+        } else if ((dir > 0 && w.pitch > ext) || (dir < 0 && w.pitch < ext)) ext = w.pitch;
+      }
+    }
+    // 偶尔的轻微修正可以有，但不能持续摇晃
+    expect(reversals).toBeLessThan(8);
+  });
+
+  it('fins and tail keep a little passive motion in the deep (not a rigid stone)', () => {
+    const range = (k: 'finN' | 'flex', a: number, b: number) => {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let p = a; p < b; p += 2e-4) {
+        const v = whale(p)[k];
+        lo = Math.min(lo, v);
+        hi = Math.max(hi, v);
+      }
+      return hi - lo;
+    };
+    expect(range('finN', 0.4, 0.44)).toBeGreaterThan(0.03);
+    expect(range('flex', 0.4, 0.44)).toBeGreaterThan(0.01);
+  });
+});
+
+describe('descent: landing and hand-offs', () => {
+  it('touches the seabed gently on schedule and settles exactly at the rest pose', () => {
+    const touch = first(0.48, DESCENT_END, (p) => {
+      const w = whale(p);
+      return w.y + lowestBelow(w.pitch) >= WORLD.seabedY - 0.02;
+    });
+    expect(Math.abs(touch - CONTACT_P)).toBeLessThan(0.004);
+    expect(flow(touch - 0.002).flowY).toBeLessThan(0.45);
+    const end = whale(DESCENT_END);
+    expect(end.x).toBeCloseTo(WORLD.restX, 4);
+    expect(end.y).toBeCloseTo(Y_REST, 4);
+    expect(end.pitch).toBeCloseTo(0, 4);
+    for (const k of ['flex', 'nod', 'fluke', 'finN', 'finF', 'beat'] as const) expect(Math.abs(end[k]), k).toBeLessThan(1e-4);
+  });
+
+  it('position, pitch and velocity are continuous where the motion table takes over', () => {
+    for (const p of [DESCENT_START, DESCENT_END]) {
+      const e = 1e-6;
+      const a = whale(p - e);
+      const b = whale(p + e);
+      for (const k of ['x', 'y', 'pitch'] as const) expect(Math.abs(a[k] - b[k]), `${k}@${p}`).toBeLessThan(1e-3);
+      const h = 2e-3;
+      const vel = (k: 'x' | 'y' | 'pitch', p0: number, p1: number) => (whale(p1)[k] - whale(p0)[k]) / (secondsAt(p1) - secondsAt(p0));
+      for (const k of ['x', 'y', 'pitch'] as const) {
+        expect(Math.abs(vel(k, p - h, p) - vel(k, p, p + h)), `velocity ${k}@${p}`).toBeLessThan(0.08);
+      }
+    }
+  });
+
+  it('the camera follows with a little lag and never jumps', () => {
+    let prev = tl.evaluate(DESCENT_START, 0).cam;
+    let pl = { x: prev.lagX, y: prev.lagY };
+    for (let p = DESCENT_START; p <= DESCENT_END; p += 1e-4) {
+      const c = tl.evaluate(p, 0).cam;
+      expect(Math.hypot(c.lagX, c.lagY)).toBeLessThan(1.5);
+      expect(Math.hypot(c.lagX - pl.x, c.lagY - pl.y)).toBeLessThan(0.05);
+      pl = { x: c.lagX, y: c.lagY };
+      prev = c;
+    }
+  });
+});
+
+describe('descent: water frame (depth compression)', () => {
+  it('compression only happens away from the surface and finishes before touchdown', () => {
+    const hidden = (p: number) => d.sample(p, {} as never).hidden;
+    expect(hidden(0.33)).toBeLessThan(0.05);
+    expect(whale(first(0.3, 0.45, (p) => hidden(p) > 1)).y).toBeGreaterThan(10);
+    expect(hidden(CONTACT_P - 0.01)).toBeCloseTo(hidden(DESCENT_END), 6);
+    // 真实深度仍然到达海床
+    expect(whale(0.4).y).toBeGreaterThan(900);
+  });
+
+  it('the seabed is anchored in the water frame and back in place at touchdown', () => {
+    const o = { x: 0, y: 0 };
+    d.seabedShift(CONTACT_P, o);
+    expect(Math.hypot(o.x, o.y)).toBeLessThan(0.01);
+    d.seabedShift(0.6, o);
+    expect(o.x === 0 && o.y === 0).toBe(true);
+    // 显现前，海床与鲸鱼的距离只按可见下沉缩短
+    d.seabedShift(0.45, o);
+    const gap = WORLD.seabedY + o.y - whale(0.45).y;
+    expect(gap).toBeLessThan(40);
+    expect(gap).toBeGreaterThan(15);
+  });
+
+  it('a creature met on the way is at its nominal depth when the whale passes it', () => {
+    const a = d.anchorFor(760)!;
+    expect(a).not.toBeNull();
+    const pPass = first(0.33, 0.47, (p) => whale(p).y >= 760);
+    const o = { x: 0, y: 0 };
+    d.shiftFor(a, pPass, o);
+    expect(Math.abs(760 + o.y - whale(pPass).y)).toBeLessThan(1);
+    // 下沉动作之外不偏移
+    d.shiftFor(a, 0.85, o);
+    expect(o.y).toBe(0);
+  });
+
+  it('is fully reversible: random-order evaluation gives identical states', () => {
+    const ps = Array.from({ length: 120 }, (_, i) => DESCENT_START + ((i * 0.6180339887) % 1) * (DESCENT_END - DESCENT_START));
+    const a = ps.map((p) => JSON.stringify(whale(p)) + JSON.stringify(tl.evaluate(p, 0).cam));
+    const b = [...ps].reverse().map((p) => JSON.stringify(whale(p)) + JSON.stringify(tl.evaluate(p, 0).cam)).reverse();
+    expect(b).toEqual(a);
+    expect(DescentMotion.covers(0.3)).toBe(true);
+    expect(DescentMotion.covers(0.6)).toBe(false);
+  });
+});

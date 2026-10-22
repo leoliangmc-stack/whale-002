@@ -511,7 +511,7 @@ export class WhaleSkeleton {
   } | null = null;
 
   private ensureCache(body: WhaleBody, st: WhaleState, finAngle: number, ground: number, n: number): NonNullable<WhaleSkeleton['cache']> {
-    const key = `${n}|${st.collapse.toFixed(3)}|${finAngle.toFixed(3)}|${st.rest.toFixed(2)}|${st.bend.toFixed(3)}`;
+    const key = `${n}|${st.collapse.toFixed(3)}|${finAngle.toFixed(3)}|${st.rest.toFixed(2)}|${st.flex.toFixed(3)}|${st.nod.toFixed(3)}`;
     if (this.cache && this.cache.key === key) return this.cache;
     const far = new Path2D();
     const column = new Path2D();

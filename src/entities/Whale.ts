@@ -25,11 +25,23 @@ export interface WhaleState {
   /** 骨骼坍塌 */
   collapse: number;
   rest: number;
-  bend: number;
   /** 骨骼表面的生态：细菌席、食骨蠕虫、沉积覆盖 */
   mats: number;
   osedax: number;
   burial: number;
+  // ---- 下沉动作层（由叙事进度确定，见 systems/DescentMotion.ts；其余时间为 0）
+  /** 停止游动前最后几次尾叶摆动的幅度与相位 */
+  beat: number;
+  beatPh: number;
+  /** 尾柄被动弯曲（米，正值上抬） */
+  flex: number;
+  /** 头部被动俯仰（米，正值向下） */
+  nod: number;
+  /** 尾叶被动偏转（弧度） */
+  fluke: number;
+  /** 近侧 / 远侧胸鳍随水流的被动摆动（弧度，正值向后上方抬起） */
+  finN: number;
+  finF: number;
 }
 
 export function makeWhaleState(): WhaleState {
@@ -47,10 +59,16 @@ export function makeWhaleState(): WhaleState {
     tissue: 1,
     collapse: 0,
     rest: 0,
-    bend: 0,
     mats: 0,
     osedax: 0,
     burial: 0,
+    beat: 0,
+    beatPh: 0,
+    flex: 0,
+    nod: 0,
+    fluke: 0,
+    finN: 0,
+    finF: 0,
   };
 }
 
@@ -102,8 +120,7 @@ export class Whale {
   readonly skeleton: WhaleSkeleton;
   readonly state: WhaleState = makeWhaleState();
   phase = 0;
-  finPhase = 0;
-  private readonly shape: WhaleShape = { swim: 0, phase: 0, mouth: 0, throat: 0, rest: 0, bend: 0, shrink: 0 };
+  private readonly shape: WhaleShape = { swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest: 0, flex: 0, nod: 0, fluke: 0, shrink: 0 };
   private readonly sh: Shade = makeShade();
   private readonly mottles: Mottle[] = [];
   private readonly holes: Hole[] = [];
@@ -117,6 +134,7 @@ export class Whale {
   /** 局部绘制变换在屏幕上的包围盒（像素，用于分解图层裁剪） */
   private bbox = { x0: 0, y0: 0, x1: 0, y1: 0 };
   finAngle = Math.PI - 0.62;
+  finFarAngle = Math.PI - 0.62;
 
   constructor(seed = 1) {
     const r = rng(seed * 97 + 13);
@@ -142,13 +160,15 @@ export class Whale {
     this.skeleton = new WhaleSkeleton(seed);
   }
 
-  /** 推进氛围动画：游动相位与鳍的摆动。progressSpeed 为叙事推进速度（用于让尾鳍拍动与位移匹配）。 */
+  /**
+   * 推进主动游动的相位。effort 为叙事推进速度（用于让尾鳍拍动与位移匹配）。
+   * 失去生命之后的一切动作（最后几次摆动、被动摆动）都由叙事进度决定，不再使用这个时钟。
+   */
   update(dt: number, effort: number): void {
     const st = this.state;
     // 大型动物的节奏：尾叶约 4~6 秒拍一次，用户快速滚动时也只略微加快
     const freq = 0.17 + 0.08 * clamp(effort);
     this.phase += dt * TAU * freq * (0.35 + 0.65 * st.swim);
-    this.finPhase += dt * 0.6;
   }
 
   /** 局部坐标 → 世界坐标 */
@@ -167,21 +187,33 @@ export class Whale {
     const sh = this.shape;
     sh.swim = st.swim;
     sh.phase = this.phase;
+    sh.beat = st.beat;
+    sh.beatPh = st.beatPh;
     sh.mouth = st.mouth;
     sh.throat = st.throat;
     sh.rest = st.rest;
-    sh.bend = st.bend;
+    sh.flex = st.flex;
+    sh.nod = st.nod;
+    sh.fluke = st.fluke;
     sh.shrink = 1 - smoothstep(0.0, 1, st.tissue);
     this.body.compute(sh);
-    // 胸鳍角度：游动时向后下方，滤食时外展，失去生命后自然下垂，静卧时贴向海床
+    this.finAngle = this.finFor(st.finN);
+    this.finFarAngle = this.finFor(st.finF);
+  }
+
+  /**
+   * 胸鳍角度：游动时向后下方，滤食时外展；失去生命后保持自然展开，
+   * 只随水流被动摆动（passive 由下沉动作层给出）；静卧时贴向海床。
+   */
+  private finFor(passive: number): number {
+    const st = this.state;
     const swimFin = Math.PI - 0.62 + 0.12 * Math.sin(this.phase * 0.5 + 0.8) * st.swim;
     const feedFin = Math.PI - 1.15;
-    const limpFin = Math.PI - 0.95 + 0.05 * Math.sin(this.finPhase * 0.7);
+    const limpFin = Math.PI - 0.8 + passive;
     const restFin = Math.PI - 0.28;
     let a = lerp(limpFin, swimFin, st.life);
     a = lerp(a, feedFin, smoothstep(0.1, 0.8, st.mouth) * st.life);
-    a = lerp(a, restFin, st.rest);
-    this.finAngle = a;
+    return lerp(a, restFin, st.rest);
   }
 
   /** 口腔中心（磷虾被吞入的位置），世界坐标。 */
@@ -703,7 +735,7 @@ export class Whale {
     b.point(S_FIN, far ? -0.32 : -0.5, this.p);
     ctx.save();
     ctx.translate(this.p.x + (far ? 0.25 : 0), this.p.y);
-    ctx.rotate(this.finAngle + (far ? 0.14 : 0));
+    ctx.rotate(far ? this.finFarAngle + 0.14 : this.finAngle);
     if (far) ctx.scale(0.92, 0.85);
     this.finPath(ctx);
     if (far) {

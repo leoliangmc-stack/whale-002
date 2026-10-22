@@ -67,10 +67,12 @@ export const SEGMENTS: Segment[] = [
   { from: 0.2, to: 0.22, seconds: 9, key: true }, // 中景喷气
   { from: 0.22, to: 0.245, seconds: 7 },
   { from: 0.245, to: 0.285, seconds: 12, key: true }, // 眼睛闭合
-  { from: 0.285, to: 0.3, seconds: 5, key: true },
-  { from: 0.3, to: 0.33, seconds: 8, key: true }, // 开始下沉
-  { from: 0.33, to: 0.46, seconds: 26 },
-  { from: 0.46, to: 0.51, seconds: 10, key: true }, // 接触海床
+  { from: 0.285, to: 0.297, seconds: 4, key: true }, // 闭眼后的停留
+  // 下沉是一段连续动作（见 systems/DescentMotion.ts），各段时长决定了动作的真实节奏
+  { from: 0.297, to: 0.322, seconds: 13, key: true }, // A：尾鳍渐停、向前滑行（侧面中远景 → 仰视）
+  { from: 0.322, to: 0.345, seconds: 12, key: true }, // B：头部先沉、身体缓缓倾斜（斜侧面跟随）
+  { from: 0.345, to: 0.46, seconds: 27 }, // C → D：稳定下沉，镜头拉远进入深海
+  { from: 0.46, to: 0.51, seconds: 14, key: true }, // 接近并接触海床
   { from: 0.51, to: 0.55, seconds: 8 },
   { from: 0.55, to: 0.7, seconds: 32, key: true }, // 身体变化
   { from: 0.7, to: 0.8, seconds: 26, key: true }, // 鲸骨生态
@@ -82,6 +84,29 @@ export const SEGMENTS: Segment[] = [
 ];
 
 export const CYCLE_SECONDS = SEGMENTS.reduce((s, g) => s + g.seconds, 0);
+
+/** 自动播放时，从 p=0 到 p 经过的秒数（“故事时间”，与当前播放速度无关）。 */
+export function secondsAt(p: number): number {
+  let t = 0;
+  for (const s of SEGMENTS) {
+    if (p >= s.to) t += s.seconds;
+    else {
+      if (p > s.from) t += ((p - s.from) / (s.to - s.from)) * s.seconds;
+      break;
+    }
+  }
+  return t;
+}
+
+/** secondsAt 的反函数。 */
+export function progressAtSeconds(sec: number): number {
+  let t = 0;
+  for (const s of SEGMENTS) {
+    if (sec <= t + s.seconds) return s.from + ((sec - t) / s.seconds) * (s.to - s.from);
+    t += s.seconds;
+  }
+  return 1;
+}
 
 /** 某一段的滚动长度（屏幕高度） */
 export function segmentScreens(s: Segment): number {
@@ -117,7 +142,7 @@ export const CAPTIONS: Caption[] = [
   { from: 0.203, to: 0.219, text: '“噗——”温暖的呼气遇到空气，化成一团水雾。' },
   { from: 0.226, to: 0.244, text: '这头座头鲸已经在海洋中游过了漫长的一生。' },
   { from: 0.25, to: 0.296, text: '它的眼睛，慢慢地闭上了。', sub: '海水依旧温柔地流动。' },
-  { from: 0.31, to: 0.345, text: '它开始缓缓下沉，离开阳光。' },
+  { from: 0.331, to: 0.358, text: '它开始缓缓下沉，离开阳光。' },
   { from: 0.355, to: 0.39, text: '越往深处，光线越少，红色最先消失。', sub: '海水从明亮的蓝，变成深沉的蓝。' },
   { from: 0.4, to: 0.44, text: '一千米以下，阳光再也到达不了。', sub: '只有生物自己发出的点点微光。' },
   { from: 0.493, to: 0.545, text: '经过漫长的下沉，它轻轻落在了海床上。', sub: '一座“鲸落”就此形成。' },

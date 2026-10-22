@@ -1,10 +1,11 @@
 import { makeShade } from '../core/color';
-import { rng } from '../core/math';
+import { rng, smoothstep } from '../core/math';
 import type { Projected } from '../core/Camera';
 import type { RenderCtx } from '../core/types';
 import { QUALITY, type QualitySettings } from '../config/performance';
 import { WORLD } from '../config/stages';
 import type { EcoState } from './StoryTimeline';
+import { DESCENT_START, DescentMotion } from './DescentMotion';
 import { Creature, type CreatureEnv } from '../entities/creatures/base';
 import { Atolla, CombJelly, Dumbo, FishSchool, LanternfishGroup, Siphonophore } from '../entities/creatures/midwater';
 import { AmphipodSwarm, Crab, Grenadier, Hagfish, SleeperShark } from '../entities/creatures/scavengers';
@@ -16,7 +17,9 @@ import { Anglerfish, GlowJelly } from '../entities/creatures/specials';
  *
  * - 叙事模式：出现与否由 StoryTimeline 给出的生态状态驱动，数量随进度平滑增减；
  * - 自由探索：显示鲸骨阶段的完整群落，以及两个隐藏发现；
- * - 中层水域生物固定在各自的深度，只在相机经过时更新与绘制。
+ * - 中层水域生物固定在各自的深度，只在相机经过时更新与绘制；
+ * - 叙事下沉途中，深度被艺术化压缩：少数“相遇”的生物锚定在水体参照系中，随鲸鱼的可见下沉
+ *   缓慢地从身边经过；其余中层生物在这段时间隐去，让深海越来越空旷。
  */
 
 export type CreatureMode = 'story' | 'explore';
@@ -53,6 +56,12 @@ interface NearestDist {
 
 const P: Projected = { x: 0, y: 0, s: 0 };
 const MID_CULL = 100;
+/** 相遇的生物在水体参照系中的最小间隔（米）：越深越稀疏 */
+const ENCOUNTER_GAP = (wy: number) => 9 + 5 * smoothstep(25, 55, wy);
+/** 第一次相遇至少在鲸鱼开始下沉的位置以下这么远（米），停止游动与失去平衡时画面里只有鲸鱼 */
+const ENCOUNTER_CLEAR = 12;
+/** 中层生物只在光线明显变暗之后才从幽暗中显现（进度） */
+const EMERGE: readonly [number, number] = [0.35, 0.362];
 
 export class CreatureManager {
   private all: Creature[] = [];
@@ -60,6 +69,10 @@ export class CreatureManager {
   private readonly sh = makeShade();
   private density = -1;
   private mode: CreatureMode = 'story';
+  private descent: DescentMotion | null = null;
+  private planned = false;
+  private storyP = -1;
+  private readonly shift = { x: 0, y: 0 };
   private anglerfish: Anglerfish | null = null;
   private glowJelly: GlowJelly | null = null;
   private readonly specialOut: Special[] = [
@@ -182,7 +195,65 @@ export class CreatureManager {
     this.glowJelly = new GlowJelly(seed++);
     list.push(this.anglerfish, this.glowJelly);
 
+    for (const c of list) if (c.midwater) c.homeY = c.y;
     this.all = list;
+    this.planned = false;
+  }
+
+  /** 叙事下沉的动作表（用于把途中的生物锚定在水体参照系中）。 */
+  setDescent(d: DescentMotion): void {
+    if (this.descent === d) return;
+    this.descent = d;
+    this.planned = false;
+  }
+
+  /** 选出下沉途中与鲸鱼相遇的少数生物：按水体中的位置排序，保持足够的间隔。 */
+  private plan(): void {
+    this.planned = true;
+    const d = this.descent;
+    const cands: Creature[] = [];
+    for (const c of this.all) {
+      c.encounter = false;
+      c.water = null;
+      if (!c.midwater || !d) continue;
+      c.water = d.anchorFor(c.homeY);
+      if (c.water) cands.push(c);
+    }
+    cands.sort((a, b) => a.water!.wy - b.water!.wy);
+    const start = d ? d.waterDepth(DESCENT_START) + ENCOUNTER_CLEAR : 0;
+    let last = -1e9;
+    let lastKind: unknown = null;
+    for (const c of cands) {
+      const wy = c.water!.wy;
+      if (wy < start || wy - last < ENCOUNTER_GAP(wy) || c.constructor === lastKind) continue;
+      c.encounter = true;
+      last = wy;
+      lastKind = c.constructor;
+    }
+  }
+
+  /** 下沉途中，未被选为相遇的中层生物的隐去程度 */
+  private veilAt(p: number): number {
+    return DescentMotion.covers(p) ? smoothstep(DESCENT_START, 0.33, p) : 0;
+  }
+
+  /** 下沉途中中层生物的可见度：相遇的生物在光线变暗后浮现，其余隐去 */
+  private descentAlpha(c: Creature, p: number): number {
+    if (!c.midwater || !DescentMotion.covers(p)) return 1;
+    return c.encounter ? smoothstep(EMERGE[0], EMERGE[1], p) : 1 - this.veilAt(p);
+  }
+
+  /** 计算本帧的水体偏移，写入 c.shiftX / shiftY */
+  private place(c: Creature, story: boolean): void {
+    c.shiftX = c.shiftY = 0;
+    if (!story || !c.water || !this.descent) return;
+    this.descent.shiftFor(c.water, this.storyP, this.shift);
+    c.shiftX = this.shift.x;
+    c.shiftY = this.shift.y;
+  }
+
+  private get inDescent(): boolean {
+    return this.mode === 'story' && this.descent !== null && DescentMotion.covers(this.storyP);
   }
 
   update(u: CreatureUpdate): void {
@@ -194,13 +265,19 @@ export class CreatureManager {
     env.time = u.time;
     env.reduced = !!u.reduced;
     this.mode = u.mode;
+    this.storyP = u.mode === 'story' ? u.p : -1;
+    const story = this.inDescent;
+    if (story && !this.planned) this.plan();
     const dt = Math.max(0, Math.min(u.dt, 0.5));
     const steps = Math.min(8, Math.max(1, Math.ceil(dt / (1 / 30))));
     const h = dt / steps;
     for (const c of this.all) {
       c.updatePresence(dt, env);
       if (!c.active || dt <= 0) continue;
-      if (c.midwater && Math.abs(c.y - u.camY) > MID_CULL) continue;
+      if (c.midwater) {
+        this.place(c, story);
+        if (Math.abs(c.y + c.shiftY - u.camY) > MID_CULL) continue;
+      }
       for (let i = 0; i < steps; i++) {
         c.clock += h;
         c.step(h, env);
@@ -212,11 +289,18 @@ export class CreatureManager {
     const list = this.drawList;
     list.length = 0;
     const cam = rc.cam;
+    const story = this.inDescent;
     for (const c of this.all) {
       if (!c.active || c.alpha <= 0.003) continue;
       if (c.z < zMin || c.z >= zMax) continue;
-      if (c.midwater && Math.abs(c.y - cam.cy) > MID_CULL) continue;
-      if (!cam.project(c.x, c.y, c.z, P)) continue;
+      if (c.midwater) {
+        if (story && this.descentAlpha(c, this.storyP) <= 0.001) continue;
+        this.place(c, story);
+        if (Math.abs(c.y + c.shiftY - cam.cy) > MID_CULL) continue;
+      } else {
+        c.shiftX = c.shiftY = 0;
+      }
+      if (!cam.project(c.x + c.shiftX, c.y + c.shiftY, c.z, P)) continue;
       const r = (Math.max(c.size, c.radius) * 1.2 + (c.custom ? 6 : 0)) * P.s + 24;
       if (P.x + r < 0 || P.x - r > rc.w || P.y + r < 0 || P.y - r > rc.h) continue;
       list.push(c);
@@ -226,15 +310,26 @@ export class CreatureManager {
     const ctx = rc.ctx;
     for (const c of list) {
       if (c instanceof GlowJelly) c.updateVisibility(rc);
-      const a = c.alpha * c.extraAlpha;
+      const a = c.alpha * c.extraAlpha * (story ? this.descentAlpha(c, this.storyP) : 1);
       if (a <= 0.003) continue;
       rc.light.shadeAt(c.x, c.y, c.z, this.sh);
       ctx.globalAlpha = a;
+      // 随水体漂移：以平移镜头的方式绘制，生物自身的形状与动画不受影响
+      const sx = c.shiftX;
+      const sy = c.shiftY;
+      if (sx !== 0 || sy !== 0) {
+        cam.cx -= sx;
+        cam.cy -= sy;
+      }
       if (c.custom) {
         c.drawCustom(rc, this.sh);
       } else {
         const scale = c.beginLocal(rc);
         c.render(ctx, rc, scale, this.sh);
+      }
+      if (sx !== 0 || sy !== 0) {
+        cam.cx += sx;
+        cam.cy += sy;
       }
     }
     ctx.globalAlpha = 1;

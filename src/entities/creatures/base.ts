@@ -61,6 +61,15 @@ export abstract class Creature {
   extraAlpha = 1;
   /** 群体类对象（鱼群、端足类群）自行处理变换与绘制 */
   custom = false;
+  /** 中层生物的名义深度（构建时的位置） */
+  homeY = 0;
+  /** 叙事下沉途中的水体锚点：鲸鱼经过 homeY 那一刻的水体位置（null 表示不随水体移动） */
+  water: { ox: number; oy: number; wy: number } | null = null;
+  /** 下沉途中是否与鲸鱼相遇；其余中层生物在下沉时隐去，让深海保持空旷 */
+  encounter = false;
+  /** 本帧的绘制偏移（米）：随水体参照系漂移 */
+  shiftX = 0;
+  shiftY = 0;
 
   constructor(readonly seed: number) {
     this.rand = rng(seed * 7919 + 17);

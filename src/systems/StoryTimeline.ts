@@ -1,8 +1,9 @@
 import type { ShotParams } from '../core/Camera';
 import { clamp, lerp, smoothstep } from '../core/math';
 import { makeTracks, Track, type Keys, type TrackSet } from '../core/Track';
-import { CAPTIONS, stageAt, TIME_LABELS, WORLD, type Caption, type StageDef } from '../config/stages';
+import { CAPTIONS, secondsAt, stageAt, TIME_LABELS, WORLD, type Caption, type StageDef } from '../config/stages';
 import { makeWhaleState, type WhaleState } from '../entities/Whale';
+import { DESCENT_START, DescentMotion, makeDescentSample } from './DescentMotion';
 
 /**
  * StoryTimeline：把 storyProgress 映射为整个世界的状态。
@@ -12,7 +13,9 @@ import { makeWhaleState, type WhaleState } from '../entities/Whale';
  *  2. 镜头轨道是“循环轨道”，在 p=1 与 p=0 处 C1 连续；
  *  3. 新鲸鱼（p≥0.875）与开场鲸鱼共用同一条“鲸鱼谱系”轨道（u = p−1），
  *     因此循环衔接时位置、大小、朝向、速度与姿态天然一致；
- *  4. 磷虾群同理（v = p−1）。
+ *  4. 磷虾群同理（v = p−1）；
+ *  5. 从停止游动到落上海床的一段（DESCENT_START ~ DESCENT_END）由 DescentMotion 的
+ *     确定性动作表给出：位置、姿态、尾叶 / 胸鳍 / 头部的被动层、镜头跟随的滞后与水体参照系。
  */
 
 export const Y_REST = WORLD.seabedY - 1.72;
@@ -70,6 +73,9 @@ export interface EcoState {
 }
 
 export interface CameraFollow {
+  /** 镜头跟随点相对鲸鱼的滞后（米，由下沉动作给出） */
+  lagX: number;
+  lagY: number;
   fw: number;
   fk: number;
   fe: number;
@@ -98,6 +104,11 @@ export interface StoryFrame {
   env: EnvState;
   eco: EcoState;
   cam: CameraFollow;
+  /**
+   * 水体参照系：x / y 为水体在世界中的累计偏移（海洋雪随之漂移），
+   * flowX / flowY 为鲸鱼相对水体的速度（m/s），wake 为尾流扰动强度。
+   */
+  water: { x: number; y: number; flowX: number; flowY: number; wake: number };
   /** 开阔海域构图旋转角（已乘以权重） */
   comp: number;
   captions: Array<{ c: Caption; a: number }>;
@@ -106,28 +117,32 @@ export interface StoryFrame {
 
 // --------------------------------------------------------------- 鲸鱼谱系轨道（定义域 u ∈ [−0.13, 0.88]）
 
-const whaleKeys: Record<keyof Omit<WhaleState, 'visible'>, Keys> = {
+type DescentField = 'beat' | 'beatPh' | 'flex' | 'nod' | 'fluke' | 'finN' | 'finF';
+const DESCENT_FIELDS: DescentField[] = ['beat', 'beatPh', 'flex', 'nod', 'fluke', 'finN', 'finF'];
+
+const whaleKeys: Record<keyof Omit<WhaleState, 'visible' | DescentField>, Keys> = {
   // 开场：从远处缓缓游来（约 2 m/s），接近磷虾群时减速
   x: [
     [-0.13, -104], [-0.1, -97], [-0.07, -88], [-0.035, -70], [0, -52.4], [0.014, -43], [0.03, -33], [0.047, -23],
     [0.061, -15], [0.068, -11.4], [0.075, -7.2], [0.078, -5.4], [0.095, 1.6], [0.11, 6.4], [0.12, 9], [0.135, 13], [0.15, 17], [0.16, 19], [0.2, 22], [0.22, 24],
-    [0.245, 26.4], [0.3, 28.5], [0.4, 29.6], [0.5, WORLD.restX], [0.88, WORLD.restX],
+    // 0.262 ~ 0.512 由下沉动作表接管（这里只决定交接处的位置与速度）
+    [0.245, 26.4], [DESCENT_START, 26.95], [0.27, 27.2], [0.512, WORLD.restX], [0.88, WORLD.restX],
   ],
   y: [
     [-0.13, 40], [-0.07, 43], [-0.035, 45], [0, 46.5], [0.03, 48], [0.047, 49.5], [0.061, 51.5], [0.075, 54.2],
     [0.095, 53.6], [0.11, 53.2], [0.12, 52], [0.135, 44], [0.15, 22], [0.156, 8], [0.16, 2.8], [0.166, 1.15], [0.2, 1.05], [0.216, 1.1],
-    [0.226, 3.2], [0.245, 6.4], [0.28, 8], [0.3, 9], [0.32, 28], [0.35, 170], [0.39, 620], [0.43, 1160],
-    [0.46, 1600], [0.475, 1752], [0.49, 1793], [0.505, Y_REST], [0.88, Y_REST],
+    [0.226, 3.2], [0.245, 6.4], [DESCENT_START, 7.3], [0.27, 7.6], [0.512, Y_REST], [0.88, Y_REST],
   ],
   z: [[-0.13, 155], [-0.1, 125], [-0.07, 92], [-0.035, 60], [0, 33], [0.014, 15.5], [0.026, 3.5], [0.035, 0], [0.88, 0]],
   pitch: [
     [-0.13, 0], [0, 0], [0.03, 0.02], [0.047, 0.06], [0.058, 0.16], [0.068, 0.19], [0.074, 0.1], [0.08, 0], [0.086, -0.07], [0.11, -0.02], [0.12, -0.12], [0.135, -0.42], [0.15, -0.38],
-    [0.158, -0.15], [0.166, -0.06], [0.2, -0.05], [0.216, -0.04], [0.226, 0.05], [0.245, 0.04], [0.29, 0.02],
-    [0.32, 0.08], [0.36, 0.13], [0.44, 0.1], [0.48, 0.05], [0.505, 0], [0.88, 0],
+    [0.158, -0.15], [0.166, -0.06], [0.2, -0.05], [0.216, -0.04], [0.226, 0.05], [0.245, 0.04], [DESCENT_START, 0.035],
+    [0.27, 0.032], [0.512, 0], [0.88, 0],
   ],
   swim: [
     [-0.13, 0.85], [0.06, 0.85], [0.075, 1], [0.088, 1], [0.11, 0.55], [0.125, 1], [0.15, 1], [0.166, 0.3], [0.2, 0.25], [0.22, 0.35],
-    [0.245, 0.3], [0.27, 0.12], [0.29, 0], [0.88, 0],
+    // 闭眼特写中（尾部不在画面里），主动游动交给由进度驱动的最后几次摆动（DescentMotion.beat）
+    [0.245, 0.3], [0.264, 0.3], [0.282, 0], [0.88, 0],
   ],
   mouth: [[-0.13, 0], [0.074, 0], [0.083, 0.55], [0.088, 1], [0.098, 1], [0.106, 0.3], [0.112, 0], [0.88, 0]],
   throat: [[-0.13, 0], [0.076, 0], [0.086, 0.6], [0.096, 1], [0.104, 1], [0.113, 0.7], [0.125, 0.25], [0.14, 0], [0.88, 0]],
@@ -135,8 +150,8 @@ const whaleKeys: Record<keyof Omit<WhaleState, 'visible'>, Keys> = {
   life: [[-0.13, 1], [0.255, 1], [0.3, 0], [0.88, 0]],
   tissue: [[-0.13, 1], [0.555, 1], [0.58, 0.92], [0.605, 0.8], [0.63, 0.64], [0.655, 0.46], [0.68, 0.26], [0.7, 0.08], [0.715, 0], [0.88, 0]],
   collapse: [[-0.13, 0], [0.6, 0], [0.66, 0.3], [0.72, 0.75], [0.78, 1], [0.88, 1]],
-  rest: [[-0.13, 0], [0.48, 0], [0.505, 1], [0.88, 1]],
-  bend: [[-0.13, 0], [0.3, 0], [0.34, 0.25], [0.45, 0.22], [0.49, 0.05], [0.505, 0], [0.88, 0]],
+  // 腹部接触海床后，身体在数秒内顺着海床放平
+  rest: [[-0.13, 0], [0.497, 0], [0.508, 1], [0.88, 1]],
   mats: [[-0.13, 0], [0.665, 0], [0.72, 0.4], [0.77, 0.85], [0.8, 1], [0.88, 1]],
   osedax: [[-0.13, 0], [0.64, 0], [0.7, 0.5], [0.76, 0.9], [0.8, 1], [0.88, 1]],
   burial: [[-0.13, 0], [0.68, 0], [0.8, 0.35], [0.88, 0.4]],
@@ -166,6 +181,7 @@ const krillKeys: Record<Exclude<keyof KrillState, 'sx' | 'sy' | 'sz'>, Keys> = {
 
 // --------------------------------------------------------------- 镜头（循环轨道）
 // 列：p, fw, fk, fe, ox, oy, frameH, needW, sx, sy, elev, lat, wcy, cyAbs
+// needW 是竖屏时必须容纳的宽度：下沉段按 ox 计算，吻端在参考点前约 6 米、尾叶尖在后约 10 米
 type CamRow = [number, number, number, number, number, number, number, number, number, number, number, number, number, number];
 const CAM_ROWS: CamRow[] = [
   // 1 超远景：鲸鱼很小，海洋辽阔，镜头缓慢推近
@@ -201,13 +217,26 @@ const CAM_ROWS: CamRow[] = [
   [0.27, 0, 0, 1, 0, 0, 2.25, 1.4, 0.5, 0.5, 0, 0, 0, 0],
   [0.288, 0, 0, 1, 0, 0, 2.0, 1.25, 0.5, 0.5, 0, 0, 0, 0],
   [0.296, 0, 0, 1, 0, 0, 2.0, 1.25, 0.5, 0.5, 0, 0, 0, 0],
-  [0.306, 0.6, 0, 0.4, 0.4, 0.2, 7, 9, 0.5, 0.5, 0, 0, 0, 0],
-  [0.318, 1, 0, 0, 0, 0.5, 22, 22, 0.5, 0.47, 0, 0, 0, 0],
-  [0.34, 1, 0, 0, 0, 3, 26, 24, 0.5, 0.42, -5, 0, 0, 0],
-  [0.37, 1, 0, 0, -1, 1, 28, 26, 0.5, 0.45, -2, -3, 0, 0],
-  [0.41, 1, 0, 0, 0, 0, 26, 24, 0.5, 0.48, 2, 2, 0, 0],
-  [0.45, 1, 0, 0, 0, 2, 30, 26, 0.5, 0.42, 5, 0, 0, 0],
-  [0.49, 1, 0, 0, 0, 1.5, 28, 24, 0.5, 0.45, 6, 0, 0, 0],
+  // ---- 下沉（各镜头之间是连续的拉、降、绕与推，没有切换）
+  // 1 侧面中远景：从闭上的眼睛缓缓拉开，看见尾鳍最后几次渐弱的摆动与向前的滑行
+  [0.303, 0.55, 0, 0.45, 0.8, 0.1, 7.5, 9, 0.5, 0.5, 0.2, 0, 0, 0],
+  [0.31, 1, 0, 0, 1.6, 0.2, 19, 24, 0.5, 0.5, 0.5, 0, 0, 0],
+  [0.317, 1, 0, 0, 0.6, 0.3, 23, 22.6, 0.5, 0.5, 0.6, 0, 0, 0],
+  // 2 略低于鲸鱼的仰视：镜头沉到身体下方，庞大的身体从上方缓缓滑过，海面的光勾出背部轮廓
+  [0.324, 1, 0, 0, -0.6, 3, 20, 20.2, 0.5, 0.5, -3.6, 0, 0, 0],
+  [0.332, 1, 0, 0, -2.2, 5.2, 16.5, 18.5, 0.5, 0.5, -6.4, 0, 0, 0],
+  // 3 斜侧面跟随：回到与鲸鱼相近的高度并偏向一侧，看头部先沉、躯干随之倾斜
+  [0.34, 1, 0, 0, 0.2, 2.2, 19, 21.8, 0.5, 0.47, -1, 3, 0, 0],
+  [0.348, 1, 0, 0, 1.2, 1, 20, 23.8, 0.5, 0.45, 1.6, 5, 0, 0],
+  [0.357, 1, 0, 0, 1.2, 0.8, 21.5, 23.8, 0.5, 0.45, 2.4, 4.5, 0, 0],
+  // 4 缓慢拉远：鲸鱼在画面中逐渐变小，四周越来越深、越来越空
+  [0.376, 1, 0, 0, 0.6, 0.8, 28, 24, 0.5, 0.46, 3, 2.5, 0, 0],
+  [0.4, 1, 0, 0, 0, 0.8, 38, 29, 0.5, 0.47, 3.5, 0, 0, 0],
+  // 5 远景持续跟随：深蓝中一个安静下沉的身影，最后自然接上海床
+  [0.43, 1, 0, 0, -0.5, 0.8, 45, 33, 0.5, 0.47, 3.6, -1, 0, 0],
+  [0.455, 1, 0, 0, 0, 1, 42, 31, 0.5, 0.46, 4, -0.5, 0, 0],
+  [0.478, 1, 0, 0, 0, 1.4, 34, 27, 0.5, 0.45, 4.8, 0, 0, 0],
+  [0.497, 1, 0, 0, 0, 1.4, 28.5, 24, 0.5, 0.46, 5.4, 0, 0, 0],
   [0.52, 1, 0, 0, 0, 1.2, 25, 22, 0.5, 0.48, 5.5, 0, 0, 0],
   [0.55, 1, 0, 0, -0.5, 1, 24, 22, 0.5, 0.5, 6, 1, 0, 0],
   [0.585, 1, 0, 0, -0.5, 0.8, 22, 21, 0.5, 0.52, 5, 2, 0, 0],
@@ -228,14 +257,15 @@ const CAM_ROWS: CamRow[] = [
   [0.97, 0.85, 0.15, 0, 16, -8, 100, 62, 0.5, 0.5, 3.5, 0, 0, 0],
 ];
 
-function camTracks(): TrackSet<keyof CameraFollow> {
+function camTracks(): TrackSet<Exclude<keyof CameraFollow, 'lagX' | 'lagY'>> {
   const cols: Array<keyof CameraFollow> = ['fw', 'fk', 'fe', 'ox', 'oy', 'frameH', 'needW', 'sx', 'sy', 'elev', 'lat', 'wcy', 'cyAbs'];
-  const ch = {} as Record<keyof CameraFollow, Array<[number, number]>>;
-  for (const c of cols) ch[c] = [];
+  type TrackedCol = Exclude<keyof CameraFollow, 'lagX' | 'lagY'>;
+  const ch = {} as Record<TrackedCol, Array<[number, number]>>;
+  for (const c of cols) ch[c as TrackedCol] = [];
   ch.ax = [[0, 0]];
   ch.ay = [[0, 0]];
-  for (const row of CAM_ROWS) cols.forEach((c, i) => ch[c].push([row[0], row[i + 1]]));
-  const set = makeTracks(ch, { cyclic: true }) as TrackSet<keyof CameraFollow>;
+  for (const row of CAM_ROWS) cols.forEach((c, i) => ch[c as TrackedCol].push([row[0], row[i + 1]]));
+  const set = makeTracks(ch, { cyclic: true }) as TrackSet<TrackedCol>;
   // 景别使用对数插值更自然：先换算成 log 再建轨道
   set.frameH = new Track(ch.frameH.map(([p, v]) => [p, Math.log(v)] as const), { cyclic: true });
   set.needW = new Track(ch.needW.map(([p, v]) => [p, Math.log(v)] as const), { cyclic: true });
@@ -279,6 +309,27 @@ export class StoryTimeline {
   private readonly altT = new Track(surfaceKeys.alt, { mode: 'smooth' });
   private readonly rotT = new Track(surfaceKeys.rot, { mode: 'smooth' });
   private readonly sedT = new Track([[0, 0], [0.497, 0], [0.56, 1]], { mode: 'linear' });
+  readonly descent = StoryTimeline.makeDescent(this.whaleT);
+  private readonly dsc = makeDescentSample();
+  private readonly wo = { x: 0, y: 0 };
+
+  /** 由交接处（DESCENT_START）的关键帧位置与速度初始化下沉动作 */
+  private static makeDescent(t: TrackSet<keyof typeof whaleKeys>): DescentMotion {
+    const p = DESCENT_START;
+    const e = 1e-4;
+    const secPerP = (secondsAt(p + e) - secondsAt(p - e)) / (2 * e);
+    return new DescentMotion(
+      {
+        x: t.x.at(p),
+        y: t.y.at(p),
+        pitch: t.pitch.at(p),
+        vx: t.x.slope(p) / secPerP,
+        vy: t.y.slope(p) / secPerP,
+        vp: t.pitch.slope(p) / secPerP,
+      },
+      Y_REST,
+    );
+  }
 
   readonly frame: StoryFrame = {
     p: 0,
@@ -290,7 +341,8 @@ export class StoryTimeline {
     surface: { aerial: 0, alt: 300, rot: 0, surfacing: 0, breath1: 0, breath2: 0, t: 0 },
     env: { vis: 70, focusLight: 0, bioGlow: 0, vignette: 0.3, sediment: 0 },
     eco: { scav: 0, amph: 0, crabs: 0, enrich: 0, sulfo: 0, dwellers: 0 },
-    cam: { fw: 0, fk: 0, fe: 0, ax: 0, ay: 0, ox: 0, oy: 0, frameH: 20, needW: 20, sx: 0.5, sy: 0.5, elev: 0, lat: 0, wcy: 0, cyAbs: 0 },
+    cam: { lagX: 0, lagY: 0, fw: 0, fk: 0, fe: 0, ax: 0, ay: 0, ox: 0, oy: 0, frameH: 20, needW: 20, sx: 0.5, sy: 0.5, elev: 0, lat: 0, wcy: 0, cyAbs: 0 },
+    water: { x: 0, y: 0, flowX: 0, flowY: 0, wake: 0 },
     comp: 0,
     captions: [],
     timeLabel: null,
@@ -301,6 +353,15 @@ export class StoryTimeline {
     const t = this.whaleT;
     for (const k in t) (out as unknown as Record<string, number>)[k] = t[k as keyof typeof t].at(u);
     out.visible = 1;
+    if (DescentMotion.covers(u)) {
+      const d = this.descent.sample(u, this.dsc);
+      out.x = d.x;
+      out.y = d.y;
+      out.pitch = d.pitch;
+      for (const k of DESCENT_FIELDS) out[k] = d[k];
+    } else {
+      for (const k of DESCENT_FIELDS) out[k] = 0;
+    }
     return out;
   }
 
@@ -356,9 +417,26 @@ export class StoryTimeline {
 
     const ct = this.camT;
     const cam = f.cam;
-    for (const key in ct) (cam as unknown as Record<string, number>)[key] = ct[key as keyof CameraFollow].at(p);
+    for (const key in ct) (cam as unknown as Record<string, number>)[key] = ct[key as keyof typeof ct].at(p);
     cam.frameH = Math.exp(cam.frameH);
     cam.needW = Math.exp(cam.needW);
+
+    // 下沉：镜头跟随点的滞后、水体参照系与尾流
+    const wa = f.water;
+    this.descent.waterOffset(p, this.wo);
+    wa.x = this.wo.x;
+    wa.y = this.wo.y;
+    if (DescentMotion.covers(p)) {
+      const d = this.descent.sample(p, this.dsc);
+      cam.lagX = d.lagX;
+      cam.lagY = d.lagY;
+      wa.flowX = d.vx;
+      wa.flowY = d.vy;
+      wa.wake = smoothstep(0.3, 0.32, p) * (1 - smoothstep(0.494, 0.5, p));
+    } else {
+      cam.lagX = cam.lagY = 0;
+      wa.flowX = wa.flowY = wa.wake = 0;
+    }
 
     const s = f.surface;
     s.aerial = this.surfT.aerial.at(p);
@@ -416,8 +494,8 @@ export class StoryTimeline {
     const sum = c.fw + c.fk + c.fe;
     const n = sum > 1e-4 ? 1 / sum : 0;
     const wa = sum > 1e-4 ? 0 : 1;
-    let tx = c.ax * wa + (whale.x * c.fw + k.x * c.fk + eye.x * c.fe) * n;
-    let ty = c.ay * wa + (whale.y * c.fw + k.y * c.fk + eye.y * c.fe) * n;
+    let tx = c.ax * wa + ((whale.x + c.lagX) * c.fw + k.x * c.fk + eye.x * c.fe) * n;
+    let ty = c.ay * wa + ((whale.y + c.lagY) * c.fw + k.y * c.fk + eye.y * c.fe) * n;
     // 偏移量在构图坐标系中，随构图一起旋转
     const cs = Math.cos(f.comp);
     const sn = Math.sin(f.comp);

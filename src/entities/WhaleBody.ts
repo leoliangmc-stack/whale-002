@@ -7,6 +7,7 @@ import { clamp, sampleProfile, smoothstep } from '../core/math';
  * 身体由一条可弯曲的“脊线”加上背侧 / 腹侧剖面构成：
  *  - 游动：尾鳍上下摆动（须鲸靠尾叶上下拍水推进）；
  *  - 滤食：下颌绕颌关节张开，喉腹褶向下鼓起；
+ *  - 下沉：尾柄、尾叶与头部的被动弯曲（由下沉动作层给出，见 systems/DescentMotion.ts）；
  *  - 静卧：脊线顺着腹部贴合海床。
  * 鲸鱼骨骼使用同一条脊线定位，保证分解时骨骼与身体严格对齐。
  */
@@ -82,15 +83,22 @@ export function mouthY(s: number): number {
 }
 
 export interface WhaleShape {
-  /** 尾鳍摆动幅度 0~1 */
+  /** 尾鳍摆动幅度 0~1（氛围时钟驱动的主动游动） */
   swim: number;
   phase: number;
+  /** 由叙事进度驱动的尾叶摆动（停止游动前最后几次渐弱的摆动） */
+  beat: number;
+  beatPh: number;
   mouth: number;
   throat: number;
   /** 静卧海床程度 0~1 */
   rest: number;
-  /** 下沉时的轻微弯曲 */
-  bend: number;
+  /** 尾柄被动弯曲（米，正值上抬）：下沉时被自下而上的水流托起，转动时滞后 */
+  flex: number;
+  /** 头部被动俯仰（米，正值向下），幅度很小 */
+  nod: number;
+  /** 尾叶被动偏转（弧度，正值尾叶上翘） */
+  fluke: number;
   /** 软组织收缩（分解）0~1 */
   shrink: number;
 }
@@ -150,18 +158,34 @@ export class WhaleBody {
     this.mly = new Float32Array(g);
   }
 
+  /** 尾叶上下摆动引起的脊线位移：幅度 amp、相位 ph。 */
+  static beatDY(s: number, amp: number, ph: number): number {
+    if (amp === 0) return 0;
+    const env = 0.04 + 0.96 * Math.pow(smoothstep(0.32, 1, s), 1.5);
+    let dy = 0.62 * amp * env * Math.sin(ph - Math.PI * 2 * 0.72 * s);
+    dy -= 0.07 * amp * Math.sin(ph + 0.7) * (1 - smoothstep(0, 0.45, s));
+    // 惯性：每次拍尾后，整个身体随之轻微起伏（滞后于尾叶），并带有很小的俯仰
+    dy += amp * (0.09 * Math.sin(ph - 1.3) + 0.035 * Math.sin(ph - 0.9) * (s - S_REF) * 2.2);
+    return dy;
+  }
+
   /** 脊线的竖向位移（局部坐标） */
   static spineDY(s: number, sh: WhaleShape): number {
-    const env = 0.04 + 0.96 * Math.pow(smoothstep(0.32, 1, s), 1.5);
-    let dy = 0.62 * sh.swim * env * Math.sin(sh.phase - Math.PI * 2 * 0.72 * s);
-    dy -= 0.07 * sh.swim * Math.sin(sh.phase + 0.7) * (1 - smoothstep(0, 0.45, s));
-    // 惯性：每次拍尾后，整个身体随之轻微起伏（滞后于尾叶），并带有很小的俯仰
-    dy += sh.swim * (0.09 * Math.sin(sh.phase - 1.3) + 0.035 * Math.sin(sh.phase - 0.9) * (s - S_REF) * 2.2);
+    let dy = WhaleBody.beatDY(s, sh.swim, sh.phase) + WhaleBody.beatDY(s, sh.beat, sh.beatPh);
     if (sh.rest > 0) {
       const lo = sampleProfile(LOWER, s);
       dy += sh.rest * (LOWER_MAX - lo) * 0.82;
     }
-    if (sh.bend !== 0) dy += sh.bend * (s - 0.45) * (s - 0.45) * 3.2;
+    // 被动弯曲沿身体平滑分布：尾柄从身体中后部开始逐渐弯起，头部只在眼睛之前有极轻的点头，
+    // 躯干保持不动，因此头、躯干与尾柄之间始终是一条连续的曲线
+    if (sh.flex !== 0) {
+      const t = smoothstep(0.42, 1, s);
+      dy -= sh.flex * t * t;
+    }
+    if (sh.nod !== 0) {
+      const h = 1 - smoothstep(0, 0.38, s);
+      dy += sh.nod * h * h;
+    }
     return dy;
   }
 
@@ -266,8 +290,8 @@ export class WhaleBody {
 
     const tA = n - 3;
     this.tailAngle = Math.atan2(py[n - 1] - py[tA], px[n - 1] - px[tA]);
-    const lead = 0.55 * sh.swim * Math.cos(sh.phase - Math.PI * 2 * 0.72);
-    this.flukeAngle = this.tailAngle - lead;
+    const lead = 0.55 * (sh.swim * Math.cos(sh.phase - Math.PI * 2 * 0.72) + sh.beat * Math.cos(sh.beatPh - Math.PI * 2 * 0.72));
+    this.flukeAngle = this.tailAngle - lead + sh.fluke;
   }
 
   indexAt(sv: number): number {

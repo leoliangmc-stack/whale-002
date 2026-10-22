@@ -61,6 +61,53 @@ export class Seabed {
   enrich = 0;
   mats = 0;
   focusX = WORLD.restX;
+  /**
+   * 海床从幽暗中显现的程度（0~1）。一千八百米深处没有阳光，下沉时海床只有在鲸鱼接近时
+   * 才逐渐从深蓝的水雾里浮现；其余时候为 1。
+   */
+  reveal = 1;
+  /**
+   * 叙事下沉途中，海床与海洋雪一样属于水体参照系：以这个偏移（米）绘制，
+   * 鲸鱼相对海床的接近速度就是它相对水体的可见下沉速度。接触海床时偏移恰好为 0。
+   */
+  shiftX = 0;
+  shiftY = 0;
+
+  /** 以水体参照系的偏移平移镜头（尚未显现时不绘制） */
+  private begin(rc: RenderCtx): boolean {
+    if (this.reveal <= 0.001) return false;
+    rc.cam.cx -= this.shiftX;
+    rc.cam.cy -= this.shiftY;
+    return true;
+  }
+
+  private end(rc: RenderCtx): void {
+    rc.cam.cx += this.shiftX;
+    rc.cam.cy += this.shiftY;
+  }
+
+  drawFar(rc: RenderCtx): void {
+    if (!this.begin(rc)) return;
+    this.farLayer(rc);
+    this.end(rc);
+  }
+
+  drawGround(rc: RenderCtx): void {
+    if (!this.begin(rc)) return;
+    this.groundLayer(rc);
+    this.end(rc);
+  }
+
+  drawNear(rc: RenderCtx): void {
+    if (!this.begin(rc)) return;
+    this.nearLayer(rc);
+    this.end(rc);
+  }
+
+  /** 叠加“尚未显现”的水雾 */
+  private haze(sh: Shade): void {
+    if (this.reveal < 1) sh.fog = 1 - (1 - sh.fog) * clamp(this.reveal);
+  }
 
   build(detail: number): void {
     if (this.built === detail) return;
@@ -175,7 +222,7 @@ export class Seabed {
     return cam.py + (this.y - cam.cy) * cam.scaleAt(z);
   }
 
-  drawFar(rc: RenderCtx): void {
+  private farLayer(rc: RenderCtx): void {
     if (!this.visible(rc)) return;
     this.build(rc.quality.seabedDetail);
     const { ctx, cam, dpr } = rc;
@@ -183,6 +230,7 @@ export class Seabed {
     for (const r of this.ridges) {
       rc.light.shadeAt(cam.cx, this.y - 40, r.z, sh);
       sh.fog = Math.min(0.94, sh.fog + 0.15);
+      this.haze(sh);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = shade(C.ridge, sh);
       ctx.beginPath();
@@ -208,7 +256,7 @@ export class Seabed {
   }
 
   /** 地面 + 位于主体后方（z ≥ 0）的岩石与细节 */
-  drawGround(rc: RenderCtx): void {
+  private groundLayer(rc: RenderCtx): void {
     if (!this.visible(rc)) return;
     this.build(rc.quality.seabedDetail);
     const { ctx, cam, dpr, w, h } = rc;
@@ -223,6 +271,7 @@ export class Seabed {
       const yy = this.groundY(rc, z);
       const t = clamp((yy - horizon) / Math.max(1, h - horizon));
       rc.light.shadeAt(this.focusX + 60, this.y, z, sh);
+      this.haze(sh);
       const base = mixRGB(C.sandFar, C.sand, smoothstep(160, 10, z), this.tmp);
       g.addColorStop(t, rgba(shadeRGB(base, sh, this.tmp)));
     }
@@ -237,8 +286,9 @@ export class Seabed {
       ctx.translate(this.P.x, yy);
       ctx.scale(1, 0.22 + 0.25 * clamp(cam.shot.elev / 8));
       const lg = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
-      lg.addColorStop(0, `rgba(196,190,160,${0.3 * rc.light.focusLight})`);
-      lg.addColorStop(0.5, `rgba(170,170,150,${0.12 * rc.light.focusLight})`);
+      const fl = rc.light.focusLight * clamp(this.reveal);
+      lg.addColorStop(0, `rgba(196,190,160,${0.3 * fl})`);
+      lg.addColorStop(0.5, `rgba(170,170,150,${0.12 * fl})`);
       lg.addColorStop(1, 'rgba(150,160,150,0)');
       ctx.fillStyle = lg;
       ctx.fillRect(-R, -R, R * 2, R * 2);
@@ -251,7 +301,7 @@ export class Seabed {
   }
 
   /** 前景（z<0）：岩石、海鳃等，产生视差遮挡 */
-  drawNear(rc: RenderCtx): void {
+  private nearLayer(rc: RenderCtx): void {
     if (!this.visible(rc)) return;
     this.drawFeatures(rc, -1e9, 0);
     this.drawRocks(rc, -1e9, 0);
@@ -264,6 +314,7 @@ export class Seabed {
     if (!cam.project(WORLD.restX - 1, this.y, 0, this.P)) return;
     const sh = this.sh;
     rc.light.shadeAt(WORLD.restX, this.y, 0, sh);
+    this.haze(sh);
     const yNear = this.groundY(rc, -5);
     const yFar = this.groundY(rc, 6);
     const ry = Math.max(2, (yNear - yFar) / 2);
@@ -320,6 +371,7 @@ export class Seabed {
       const size = f.s * s;
       if (size < 0.6 && f.kind !== 'seapen' && f.kind !== 'sponge') continue;
       rc.light.shadeAt(f.x, this.y, f.z, sh);
+      this.haze(sh);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       switch (f.kind) {
         case 'pebble': {
@@ -454,6 +506,7 @@ export class Seabed {
       if (!cam.project(d.x, this.y, d.z, P)) continue;
       if (P.x + d.w * P.s < 0 || P.x - d.w * P.s > rc.w) continue;
       rc.light.shadeAt(d.x, this.y, d.z, sh);
+      this.haze(sh);
       const near = d.z < 0;
       if (near) sh.light *= 0.55;
       cam.applyTransform(ctx, dpr, d.x, this.y, d.z);

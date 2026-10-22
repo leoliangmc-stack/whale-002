@@ -118,6 +118,43 @@ const P = (page) => page.evaluate(() => window.__wf.app.progress.shown);
   await ctx.close();
 }
 
+// ---------- 下沉：同一进度无论经由自动播放、滚轮回退还是直接跳转到达，鲸鱼的身体几何与镜头都完全一致
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => errors.push('descent: ' + e));
+  await page.goto(base + '?p=0.3&muted');
+  await page.waitForFunction(() => window.__done === true);
+  const snap = () => page.evaluate(() => {
+    const a = window.__wf.app; const w = a.world.whale1; const b = w.body; const s = a.narrative.currentShot;
+    const v = [w.state.x, w.state.y, w.state.pitch, w.finAngle, w.finFarAngle, b.flukeAngle, s.tx, s.ty, s.frameH, s.elev];
+    for (let i = 0; i < b.n; i += 3) v.push(b.ux[i], b.uy[i], b.bx[i], b.by[i]);
+    return { p: a.progress.shown, v };
+  });
+  const same = async (label) => {
+    const s1 = await snap();
+    await page.evaluate((p) => window.__wf.setP(p), s1.p);
+    await page.waitForTimeout(300);
+    const s2 = await snap();
+    const diff = Math.max(...s1.v.map((x, i) => Math.abs(x - s2.v[i])));
+    check(`descent pose is history-independent (${label})`, Math.abs(s1.p - s2.p) < 1e-9 && diff < 1e-6, `p=${s1.p.toFixed(4)} maxΔ=${diff.toExponential(1)}`);
+  };
+  // 向前：自动播放经过停止游动与失去平衡
+  await page.evaluate(() => window.__wf.app.progress.setPlaying(true));
+  await page.waitForTimeout(5000);
+  await page.evaluate(() => window.__wf.app.progress.setPlaying(false));
+  await page.waitForTimeout(800);
+  await same('autoplay forward');
+  // 向后：从深海用滚轮回看
+  await page.evaluate(() => window.__wf.setP(0.43));
+  await page.waitForTimeout(400);
+  await page.mouse.move(640, 400);
+  for (let i = 0; i < 12; i++) { await page.mouse.wheel(0, -120); await page.waitForTimeout(40); }
+  await page.waitForTimeout(2000);
+  await same('wheel backward');
+  await ctx.close();
+}
+
 // ---------- 手机触摸
 {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });

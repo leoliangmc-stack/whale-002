@@ -7,8 +7,23 @@ import type { QualitySettings } from '../config/performance';
 /**
  * ParticleManager：漂浮颗粒（海洋雪）、着陆时扬起的沉积物、海面喷气水雾与气泡。
  *  - 海洋雪使用固定数组 + 视差偏移，永不重新分配；
+ *  - 海洋雪属于“水体参照系”：镜头相对水体的移动才产生视差（水体偏移由叙事给出），
+ *    因此鲸鱼下沉时，颗粒以鲸鱼相对水体的缓慢速度从身边经过；
+ *  - 大型身体经过时，附近的颗粒被轻轻推开、身后的颗粒被稍稍带走（绘制时的位移场，不累积）；
  *  - 沉积物与水雾是叙事进度的解析函数（位置 = f(局部时间)），可以完美倒放。
  */
+
+/** 在水中移动的大型身体（用于颗粒的绕流偏移） */
+export interface Wake {
+  amt: number;
+  x: number;
+  y: number;
+  z: number;
+  pitch: number;
+  /** 相对水体的速度（m/s） */
+  vx: number;
+  vy: number;
+}
 
 const SNOW_MAX = 300;
 const SAND = hex('#8c8576');
@@ -26,6 +41,11 @@ export class ParticleManager {
   private screenVy = 0;
   private readonly sh: Shade = makeShade();
   quality!: QualitySettings;
+  /** 水体在世界中的累计偏移（米）：只有镜头相对水体的移动才让颗粒产生视差 */
+  waterX = 0;
+  waterY = 0;
+  readonly wake: Wake = { amt: 0, x: 0, y: 0, z: 0, pitch: 0, vx: 0, vy: 0 };
+  private readonly wp = { x: 0, y: 0, s: 0 };
 
   constructor() {
     for (let i = 0; i < SNOW_MAX; i++) {
@@ -43,12 +63,14 @@ export class ParticleManager {
   update(rc: RenderCtx, dt: number): void {
     const cam = rc.cam;
     const ppm = cam.ppm;
+    const cx = cam.cx - this.waterX;
+    const cy = cam.cy - this.waterY;
     if (Number.isNaN(this.lastCx)) {
-      this.lastCx = cam.cx;
-      this.lastCy = cam.cy;
+      this.lastCx = cx;
+      this.lastCy = cy;
     }
-    let dx = (cam.cx - this.lastCx) * ppm;
-    let dy = (cam.cy - this.lastCy) * ppm;
+    let dx = (cx - this.lastCx) * ppm;
+    let dy = (cy - this.lastCy) * ppm;
     // 跳转（重新开始 / 切换章节）时不要产生巨大的拖影
     if (Math.abs(dx) > rc.w || Math.abs(dy) > rc.h * 1.5) {
       dx = 0;
@@ -63,8 +85,8 @@ export class ParticleManager {
       this.oy[i] += dt * 3.5 * k * drift;
       this.ox[i] += dt * 1.2 * k * drift * Math.sin(rc.time * 0.2 + this.ph[i]);
     }
-    this.lastCx = cam.cx;
-    this.lastCy = cam.cy;
+    this.lastCx = cx;
+    this.lastCy = cy;
   }
 
   /** 绘制海洋雪。near=true 时只画近景大颗粒（在主体之后再画，形成前景层）。 */
@@ -84,14 +106,75 @@ export class ParticleManager {
     const streak = Math.min(60, Math.abs(this.screenVy) / 60);
     // 快速上升 / 下降时降低亮度，避免高速闪动
     const speedFade = 1 / (1 + Math.abs(this.screenVy) / 900);
+    // 绕流：把身体近似为沿脊线的椭圆（屏幕像素），速度换算为屏幕位移
+    const wk = this.wake;
+    const P = this.wp;
+    let wOn = false;
+    let wcx = 0;
+    let wcy = 0;
+    let ax = 1;
+    let ay = 0;
+    let ea = 1;
+    let eb = 1;
+    let mvx = 0;
+    let mvy = 0;
+    let push = 0;
+    let trail = 0;
+    if (!near && wk.amt > 0.01 && cam.project(wk.x, wk.y, wk.z, P)) {
+      const sp = Math.hypot(wk.vx, wk.vy);
+      if (sp > 0.02) {
+        wOn = true;
+        wcx = P.x;
+        wcy = P.y;
+        ax = Math.cos(wk.pitch);
+        ay = Math.sin(wk.pitch);
+        ea = 7.6 * P.s;
+        eb = 2.3 * P.s;
+        mvx = wk.vx / sp;
+        mvy = wk.vy / sp;
+        // 位移约等于身体在 0.4 秒内移过的距离，并且不超过身体半高的一部分
+        push = wk.amt * Math.min(eb * 0.45, sp * 0.4 * P.s);
+        trail = wk.amt * Math.min(eb * 0.5, sp * 0.5 * P.s);
+      }
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalCompositeOperation = 'lighter';
     for (let i = 0; i < n; i++) {
       const k = this.d[i];
       const isNear = k > 1.3;
       if (near !== isNear) continue;
-      const x = mod(this.u[i] * W + this.ox[i], W) - margin;
-      const y = mod(this.v[i] * H + this.oy[i], H) - margin;
+      let x = mod(this.u[i] * W + this.ox[i], W) - margin;
+      let y = mod(this.v[i] * H + this.oy[i], H) - margin;
+      // 与鲸鱼大致处于同一深度层的颗粒才受绕流影响
+      if (wOn && k > 0.6) {
+        const kz = (k - 1) / 0.32;
+        const lw = Math.exp(-kz * kz);
+        const dx = x - wcx;
+        const dy = y - wcy;
+        const u = (dx * ax + dy * ay) / ea;
+        const v = (dy * ax - dx * ay) / eb;
+        const r2 = u * u + v * v;
+        if (r2 < 12 && lw > 0.05) {
+          const r = Math.sqrt(r2);
+          // 1) 靠近身体的颗粒沿轮廓法向被推开，随距离迅速减弱
+          const f = r < 1 ? 1 : Math.exp(-(r - 1) * 1.5);
+          let gx = (u / ea) * ax - (v / eb) * ay;
+          let gy = (u / ea) * ay + (v / eb) * ax;
+          const gl = Math.hypot(gx, gy) || 1;
+          gx /= gl;
+          gy /= gl;
+          x += gx * push * f * lw;
+          y += gy * push * f * lw;
+          // 2) 尾流：身体后方（运动方向的反侧）的颗粒被轻轻带向运动方向
+          const behind = -(dx * mvx + dy * mvy);
+          if (behind > 0) {
+            const lat = (dy * mvx - dx * mvy) / (ea * 0.85);
+            const wl = Math.exp(-lat * lat) * Math.exp(-behind / (eb * 3.5)) * smoothstep(0, eb, behind);
+            x += mvx * trail * wl * lw;
+            y += mvy * trail * wl * lw;
+          }
+        }
+      }
       if (y < clipTop) continue;
       const s = this.size[i] * (isNear ? k * 2.2 : 0.8 + k * 1.6) * Math.min(1.6, Math.max(0.6, cam.ppm / 30));
       const a = (isNear ? 0.16 : 0.12 + 0.3 * Math.min(1, k)) * lum * speedFade;

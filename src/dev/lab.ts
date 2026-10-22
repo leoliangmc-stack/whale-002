@@ -25,7 +25,7 @@ const cells: Cell[] = mode === 'eye' ? [
   { label: 'mouth 0.5', y: 60, frameH: 18, set: (w) => { w.state.mouth = 0.5; w.state.throat = 0.4; } },
   { label: 'mouth 1', y: 60, frameH: 18, set: (w) => { w.state.mouth = 1; w.state.throat = 1; } },
   { label: 'throat full closed', y: 60, frameH: 18, set: (w) => { w.state.mouth = 0.0; w.state.throat = 0.8; } },
-  { label: 'sinking', y: 600, frameH: 18, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.bend = 0.3; w.state.pitch = 0.1; } },
+  { label: 'sinking', y: 600, frameH: 18, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.pitch = 0.16; w.state.flex = 0.24; w.state.nod = 0.04; w.state.fluke = 0.14; w.state.finN = 0.3; w.state.finF = 0.26; } },
   { label: 'rest', y: 1798.3, frameH: 18, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.rest = 1; } },
   { label: 'decay 0.6', y: 1798.3, frameH: 18, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.rest = 1; w.state.tissue = 0.6; } },
   { label: 'decay 0.25', y: 1798.3, frameH: 18, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.rest = 1; w.state.tissue = 0.25; w.state.collapse = 0.2; } },

@@ -53,6 +53,9 @@ export class ExploreScene {
     });
     world.krill.update(this.fakeKrill, rc.time, 0, rc.reducedMotion);
     world.seabed.enrich = 1;
+    world.seabed.reveal = 1;
+    world.seabed.shiftX = world.seabed.shiftY = 0;
+    world.particles.wake.amt = 0;
     world.seabed.mats = w1.state.mats;
     world.seabed.focusX = w1.state.x;
     world.creatures.update({ mode: 'explore', p: 0.78, eco: world.ecology.eco, camY: camera.cam.cy, dt: edt, time: rc.time, reduced: rc.reducedMotion });

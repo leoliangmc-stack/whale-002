@@ -23,14 +23,14 @@ export interface AudioFrame {
 
 /** 叙事中触发的声音事件（只在正向经过时触发） */
 const CUES: Array<{ at: number; kind: 'call' | 'callFar' | 'spout' | 'spoutFar' | 'farewell' | 'bubbles' }> = [
-  { at: 0.012, kind: 'callFar' },
-  { at: 0.06, kind: 'call' },
+  // 开场保持克制：只有两声远处传来的低吟，给安静观察留出空间
+  { at: 0.018, kind: 'callFar' },
+  { at: 0.042, kind: 'callFar' },
   { at: 0.118, kind: 'bubbles' },
   { at: 0.171, kind: 'spoutFar' },
   { at: 0.204, kind: 'spout' },
   { at: 0.257, kind: 'farewell' },
   { at: 0.935, kind: 'callFar' },
-  { at: 0.968, kind: 'call' },
 ];
 
 export class AudioManager {

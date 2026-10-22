@@ -62,6 +62,7 @@ export class NarrativeScene {
       bioGlow: f.env.bioGlow,
       rays: 1,
       vignette: f.env.vignette,
+      lookUp: clamp(-this.shot.elev / 6),
     });
 
     // 磷虾：由正在接近的那头鲸鱼提供嘴与吻端位置

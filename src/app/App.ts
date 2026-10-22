@@ -111,7 +111,7 @@ export class App {
       mode: (): InputMode => (this.mode === 'story' ? 'story' : this.mode === 'explore' ? 'explore' : 'none'),
       scroll: (px) => {
         this.hasScrolled = true;
-        this.progress.scrollBy(StoryProgressController.pixelsToProgress(px, this.rc.h));
+        this.progress.scrollScreens(StoryProgressController.pixelsToScreens(px, this.rc.h));
         this.ui.poke();
       },
       pan: (dx, dy) => {

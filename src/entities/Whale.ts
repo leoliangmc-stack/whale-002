@@ -145,7 +145,8 @@ export class Whale {
   /** 推进氛围动画：游动相位与鳍的摆动。progressSpeed 为叙事推进速度（用于让尾鳍拍动与位移匹配）。 */
   update(dt: number, effort: number): void {
     const st = this.state;
-    const freq = 0.22 + 0.2 * clamp(effort);
+    // 大型动物的节奏：尾叶约 4~6 秒拍一次，用户快速滚动时也只略微加快
+    const freq = 0.17 + 0.08 * clamp(effort);
     this.phase += dt * TAU * freq * (0.35 + 0.65 * st.swim);
     this.finPhase += dt * 0.6;
   }
@@ -558,6 +559,31 @@ export class Whale {
     ctx.globalAlpha = 0.28;
     ctx.drawImage(textures().skin, -8.3, -1.8, 14.4, 4.4);
     ctx.globalAlpha = 1;
+    // 近景：细小的毛孔、斑点与浅浅的褶痕（只铺在镜头附近，开销很小）
+    if (scale > 70 && st.tissue > 0.99) this.drawSkinDetail(ctx, rc, scale);
+    // 逆光：镜头位于鲸鱼下方时，身体背着明亮的海面变暗，边缘被海面的光勾勒出来
+    const below = clamp((rc.cam.cy - st.y - 1.5) / 5);
+    const rim = below * clamp(rc.light.sunAt(st.y - 15) * 1.4);
+    if (rim > 0.02) {
+      ctx.fillStyle = `rgba(6,22,42,${0.4 * rim})`;
+      ctx.fillRect(-9.5, -3, 17, 9);
+      // 只沿背部上缘：由宽到窄的几层描边在裁剪区内叠出柔和的内侧光边
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.beginPath();
+      ctx.moveTo(b.ux[0], b.uy[0]);
+      through(ctx, b.ux, b.uy, 0, n - 1);
+      for (const [lw, a] of [
+        [0.7, 0.05],
+        [0.36, 0.08],
+        [0.14, 0.16],
+        [0.05, 0.3],
+      ] as const) {
+        ctx.strokeStyle = `rgba(200,240,255,${a * rim})`;
+        ctx.lineWidth = lw;
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
     ctx.restore();
 
     // 嘴线（闭嘴时为一条带上扬的暗线）
@@ -580,6 +606,29 @@ export class Whale {
     this.drawEye(ctx, scale);
     // 近侧胸鳍
     this.drawFin(ctx, false);
+  }
+
+  /** 近景皮肤细节：以眼睛附近为中心平铺细节纹理，越近越清晰。 */
+  private drawSkinDetail(ctx: CanvasRenderingContext2D, rc: RenderCtx, scale: number): void {
+    const tex = textures().skinDetail;
+    const a = clamp((scale - 70) / 220);
+    const tile = 0.9;
+    this.body.frame(S_EYE, 0, this.f);
+    // 只覆盖镜头可能看到的范围（以眼睛为中心）
+    const span = Math.min(9, (rc.h / scale) * 1.6 + 1);
+    const x0 = Math.floor((this.f.x - span) / tile) * tile;
+    const y0 = Math.floor((this.f.y - span * 0.6) / tile) * tile;
+    ctx.globalAlpha = 0.5 * a;
+    for (let x = x0; x < this.f.x + span; x += tile) {
+      for (let y = y0; y < this.f.y + span * 0.6; y += tile) ctx.drawImage(tex, x, y, tile, tile);
+    }
+    // 柔和的顶光：皮肤上方略亮，向下渐暗
+    const g = ctx.createRadialGradient(this.f.x - 0.4, this.f.y - 1.2, 0, this.f.x - 0.4, this.f.y - 1.2, 2.6);
+    g.addColorStop(0, `rgba(200,225,240,${0.1 * a})`);
+    g.addColorStop(1, 'rgba(200,225,240,0)');
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = g;
+    ctx.fillRect(this.f.x - 3, this.f.y - 4, 6, 6);
   }
 
   private drawFluke(ctx: CanvasRenderingContext2D): void {

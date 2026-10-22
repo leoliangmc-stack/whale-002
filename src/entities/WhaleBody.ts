@@ -155,6 +155,8 @@ export class WhaleBody {
     const env = 0.04 + 0.96 * Math.pow(smoothstep(0.32, 1, s), 1.5);
     let dy = 0.62 * sh.swim * env * Math.sin(sh.phase - Math.PI * 2 * 0.72 * s);
     dy -= 0.07 * sh.swim * Math.sin(sh.phase + 0.7) * (1 - smoothstep(0, 0.45, s));
+    // 惯性：每次拍尾后，整个身体随之轻微起伏（滞后于尾叶），并带有很小的俯仰
+    dy += sh.swim * (0.09 * Math.sin(sh.phase - 1.3) + 0.035 * Math.sin(sh.phase - 0.9) * (s - S_REF) * 2.2);
     if (sh.rest > 0) {
       const lo = sampleProfile(LOWER, s);
       dy += sh.rest * (LOWER_MAX - lo) * 0.82;

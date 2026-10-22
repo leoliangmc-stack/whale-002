@@ -109,6 +109,44 @@ export function skinTexture(w = 512, h = 160, seed = 3): Tex {
   return c;
 }
 
+/** 近景皮肤细节（可平铺）：细小的毛孔、浅色斑点与几道柔和的褶痕。 */
+export function skinDetailTile(size = 256, seed = 11): Tex {
+  const [c, ctx] = makeCanvas(size, size);
+  const r = rng(seed);
+  const wrap = (fn: (ox: number, oy: number) => void) => {
+    for (const ox of [-size, 0, size]) for (const oy of [-size, 0, size]) fn(ox, oy);
+  };
+  for (let i = 0; i < 700; i++) {
+    const x = r() * size;
+    const y = r() * size;
+    const rad = 0.6 + r() * r() * 2.6;
+    const dark = r() > 0.35;
+    const a = dark ? 0.1 + r() * 0.16 : 0.05 + r() * 0.1;
+    ctx.fillStyle = dark ? `rgba(0,0,0,${a})` : `rgba(255,255,255,${a})`;
+    wrap((ox, oy) => {
+      ctx.beginPath();
+      ctx.ellipse(x + ox, y + oy, rad * 1.3, rad, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 14; i++) {
+    const x = r() * size;
+    const y = r() * size;
+    const len = 18 + r() * 50;
+    const bend = (r() - 0.5) * 16;
+    ctx.strokeStyle = `rgba(0,0,0,${0.06 + r() * 0.06})`;
+    ctx.lineWidth = 0.8 + r() * 1.2;
+    wrap((ox, oy) => {
+      ctx.beginPath();
+      ctx.moveTo(x + ox, y + oy);
+      ctx.quadraticCurveTo(x + ox + len / 2, y + oy + bend, x + ox + len, y + oy + bend * 0.3);
+      ctx.stroke();
+    });
+  }
+  return c;
+}
+
 /** 海面俯视纹理：多方向细浪的高光。 */
 export function waveTile(size = 256, seed = 5): Tex {
   const [c, ctx] = makeCanvas(size, size);
@@ -211,12 +249,16 @@ export function sedimentTile(size = 128, seed = 9): Tex {
 }
 
 /** 光束：横向高斯衰减、纵向渐隐的柔和光柱。 */
+function smoothstep01(t: number): number {
+  return t * t * (3 - 2 * t);
+}
+
 export function rayTexture(w = 64, h = 256): Tex {
   const [c, ctx] = makeCanvas(w, h);
   const img = ctx.createImageData(w, h);
   for (let y = 0; y < h; y++) {
     const v = y / (h - 1);
-    const fadeV = Math.pow(1 - v, 1.6) * Math.min(1, v * 12 + 0.25);
+    const fadeV = Math.pow(1 - v, 1.6) * smoothstep01(Math.min(1, v * 6));
     for (let x = 0; x < w; x++) {
       const u = (x / (w - 1)) * 2 - 1;
       const a = Math.exp(-u * u * 3.2) * fadeV;
@@ -257,6 +299,7 @@ export interface TextureSet {
   sediment: Tex;
   ray: Tex;
   hole: Tex;
+  skinDetail: Tex;
 }
 
 let cached: TextureSet | null = null;
@@ -275,6 +318,7 @@ export function textures(): TextureSet {
     sediment: sedimentTile(),
     ray: rayTexture(),
     hole: holeDot(),
+    skinDetail: skinDetailTile(),
   };
   return cached;
 }

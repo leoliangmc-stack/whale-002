@@ -11,6 +11,8 @@ import type { KrillState } from '../systems/StoryTimeline';
  */
 
 const MAX = 1200;
+/** 零星磷虾（开场眼睛特写时漂过镜头前） */
+const STRAYS = 12;
 
 export class KrillSwarm {
   readonly n = MAX;
@@ -31,6 +33,11 @@ export class KrillSwarm {
   private readonly alpha = new Float32Array(MAX);
   private readonly cap = new Float32Array(MAX);
   private count = 0;
+  private readonly strayOff = new Float32Array(STRAYS * 4);
+  private readonly sxs = new Float32Array(STRAYS);
+  private readonly sys = new Float32Array(STRAYS);
+  private readonly szs = new Float32Array(STRAYS);
+  private readonly sang = new Float32Array(STRAYS);
   private readonly sh: Shade = makeShade();
   state: KrillState | null = null;
   /** 嘴部位置（世界坐标），由鲸鱼提供 */
@@ -60,11 +67,28 @@ export class KrillSwarm {
       // 被吞阈值：群体沿游动方向（朝向鲸鱼）的前缘先被吞入
       this.eatTh[i] = clamp(0.04 + (1 - x) * 0.33 + hash1(i * 23) * 0.2);
     }
+    for (let i = 0; i < STRAYS; i++) {
+      this.strayOff[i * 4] = -1.5 + (i / (STRAYS - 1)) * 8.5 + (hash1(i * 41 + 1) - 0.5) * 0.8;
+      this.strayOff[i * 4 + 1] = (hash1(i * 41 + 2) - 0.5) * 3.4;
+      this.strayOff[i * 4 + 2] = -1.2 + hash1(i * 41 + 3) * 2;
+      this.strayOff[i * 4 + 3] = hash1(i * 41 + 4) * 100;
+    }
   }
 
   update(st: KrillState, time: number, count: number, reduced: boolean): void {
     this.state = st;
     this.count = Math.min(MAX, count);
+    if (st.stray > 0.001) {
+      const k = reduced ? 0.5 : 1;
+      for (let i = 0; i < STRAYS; i++) {
+        const ph = this.strayOff[i * 4 + 3];
+        const t = time * 0.18 * k + ph;
+        this.sxs[i] = st.sx + this.strayOff[i * 4] + noise1(t, 7) * 0.35;
+        this.sys[i] = st.sy + this.strayOff[i * 4 + 1] + noise1(t + 19, 8) * 0.25;
+        this.szs[i] = st.sz + this.strayOff[i * 4 + 2];
+        this.sang[i] = Math.PI + noise1(t * 0.7 + 5, 9) * 0.6;
+      }
+    }
     if (st.visible <= 0.001) return;
     const n = this.count;
     // 群体朝向：沿 heading 方向拉长
@@ -136,7 +160,7 @@ export class KrillSwarm {
    */
   draw(rc: RenderCtx, layer: 'behind' | 'front' | 'captured', zSplit = 0): void {
     const st = this.state;
-    if (!st || st.visible <= 0.001) return;
+    if (!st) return;
     const { ctx, cam, dpr } = rc;
     const tex = st.deep > 0.5 ? textures().krillDeep : textures().krill;
     const tw = tex.width;
@@ -145,6 +169,8 @@ export class KrillSwarm {
     rc.light.shadeAt(st.x, st.y, st.z, sh);
     // 磷虾是画面中的重要角色：保证在深海与远景中仍清晰可辨
     const light = Math.max(0.78, Math.min(1.15, sh.light + sh.warm * 0.6 + 0.25));
+    if (layer !== 'captured' && st.stray > 0.01) this.drawStrays(rc, layer, zSplit, tex, light);
+    if (st.visible <= 0.001) return;
     // 群体的整体“质量感”：柔和的橙色雾团
     if (layer === 'behind') this.drawHaze(rc, light);
     const P = { x: 0, y: 0, s: 0 };
@@ -189,6 +215,33 @@ export class KrillSwarm {
       ctx.drawImage(tex, -tw / 2, -th / 2);
     }
     void dots;
+    ctx.globalAlpha = 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  /** 零星的几只磷虾：先于磷虾群出现，从眼睛特写前缓缓漂过。 */
+  private drawStrays(rc: RenderCtx, layer: 'behind' | 'front', zSplit: number, tex: CanvasImageSource & { width: number; height: number }, light: number): void {
+    const st = this.state!;
+    const { ctx, cam, dpr } = rc;
+    const P = { x: 0, y: 0, s: 0 };
+    const tw = tex.width;
+    const th = tex.height;
+    for (let i = 0; i < STRAYS; i++) {
+      const z = this.szs[i];
+      if (layer === 'behind' ? z <= zSplit : z > zSplit) continue;
+      if (!cam.project(this.sxs[i], this.sys[i], z, P)) continue;
+      if (P.x < -40 || P.y < -40 || P.x > rc.w + 40 || P.y > rc.h + 40) continue;
+      const L = 0.14 * (0.85 + 0.3 * hash1(i * 7)) * P.s;
+      if (L < 1.5) continue;
+      const ang = this.sang[i];
+      const cos = Math.cos(ang);
+      const sin = Math.sin(ang);
+      const flip = cos < 0 ? -1 : 1;
+      const k = (L / tw) * dpr;
+      ctx.setTransform(cos * k, sin * k, -sin * k * flip, cos * k * flip, P.x * dpr, P.y * dpr);
+      ctx.globalAlpha = st.stray * Math.min(1, light + 0.1);
+      ctx.drawImage(tex, -tw / 2, -th / 2);
+    }
     ctx.globalAlpha = 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }

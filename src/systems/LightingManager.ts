@@ -65,6 +65,8 @@ export interface LightingInput {
   rays: number;
   /** 暗角强度 */
   vignette: number;
+  /** 仰视程度（0~1）：镜头从下方仰拍时，画面上方透出海面的天光 */
+  lookUp?: number;
 }
 
 export class LightingManager {
@@ -76,6 +78,7 @@ export class LightingManager {
   bioGlow = 0;
   raysMul = 1;
   vignette = 0.35;
+  lookUp = 0;
   readonly water: RGB = [30, 90, 150];
   private readonly tmpA: RGB = [0, 0, 0];
   private readonly tmpB: RGB = [0, 0, 0];
@@ -91,6 +94,7 @@ export class LightingManager {
     this.bioGlow = input.bioGlow;
     this.raysMul = input.rays;
     this.vignette = input.vignette;
+    this.lookUp = input.lookUp ?? 0;
     this.waterAt(this.depth, this.water);
   }
 
@@ -158,6 +162,22 @@ export class LightingManager {
       rg.addColorStop(1, 'rgba(120,200,240,0)');
       ctx.fillStyle = rg;
       ctx.fillRect(0, 0, w, h);
+      // 仰拍：画面上缘透出柔和的海面天光（斯涅尔窗），让上方经过的身体显出轮廓
+      const up = this.lookUp * sun;
+      if (up > 0.01) {
+        const ug = ctx.createLinearGradient(0, 0, 0, h * 0.62);
+        ug.addColorStop(0, `rgba(205,240,255,${0.3 * up})`);
+        ug.addColorStop(0.4, `rgba(150,215,245,${0.12 * up})`);
+        ug.addColorStop(1, 'rgba(120,200,240,0)');
+        ctx.fillStyle = ug;
+        ctx.fillRect(0, 0, w, h * 0.62);
+        // 脚下是更深的海水
+        const dg = ctx.createLinearGradient(0, h * 0.45, 0, h);
+        dg.addColorStop(0, 'rgba(8,40,80,0)');
+        dg.addColorStop(1, `rgba(8,40,80,${0.35 * this.lookUp})`);
+        ctx.fillStyle = dg;
+        ctx.fillRect(0, h * 0.45, w, h * 0.55);
+      }
     }
   }
 

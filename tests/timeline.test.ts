@@ -40,7 +40,7 @@ describe('seamless loop (p → 1 matches p = 0)', () => {
     ['portrait', -0.73, 390 / 844],
   ] as const) {
     it(`${name}: new whale at the end equals the opening whale`, () => {
-      const end = tl.evaluate(1 - 1e-6, comp);
+      const end = tl.evaluate(1 - 1e-7, comp);
       const w2 = { ...end.whale2 };
       const start = tl.evaluate(0, comp);
       const w1 = { ...start.whale1 };

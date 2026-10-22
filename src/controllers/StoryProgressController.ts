@@ -1,4 +1,4 @@
-import { CYCLE_SECONDS, segmentAt, SEGMENTS } from '../config/stages';
+import { CYCLE_SECONDS, segmentAt, segmentScreens, SEGMENTS } from '../config/stages';
 import { clamp, damp } from '../core/math';
 
 /**
@@ -14,8 +14,7 @@ export interface ProgressEvents {
   onLoop?: (cycles: number) => void;
 }
 
-/** 屏幕高度的多少倍滚动距离对应一整圈叙事 */
-export const SCREENS_PER_CYCLE = 34;
+export { SCREENS_PER_CYCLE } from '../config/stages';
 /** 用户停止输入后多久恢复自动播放（秒） */
 const RESUME_DELAY = 1.6;
 /** target 领先 shown 的最大距离（避免输入“攒”太多） */
@@ -47,6 +46,47 @@ export class StoryProgressController {
     this.target += delta;
     this.idle = 0;
     this.clampTarget();
+  }
+
+  /** 用户滚动：以屏幕高度为单位（正值向前）。每一段按各自的滚动长度换算成进度。 */
+  scrollScreens(screens: number): void {
+    this.scrollBy(StoryProgressController.advance(this.target, screens) - this.target);
+  }
+
+  /** 从累计进度 total 出发滚动 screens 个屏幕高度后的累计进度（不低于 0）。 */
+  static advance(total: number, screens: number): number {
+    const t0 = Math.max(0, total);
+    let base = Math.floor(t0);
+    let p = t0 - base;
+    let i = SEGMENTS.findIndex((x) => p >= x.from && p < x.to);
+    if (i < 0) i = SEGMENTS.length - 1;
+    let rem = screens;
+    // 逐段推进；用段序号而不是进度值查找下一段，避免浮点误差停在段边界上
+    for (let guard = 0; guard < 400; guard++) {
+      const g = SEGMENTS[i];
+      const perScreen = (g.to - g.from) / segmentScreens(g);
+      if (rem >= 0) {
+        const room = (g.to - p) / perScreen;
+        if (rem <= room) return base + p + rem * perScreen;
+        rem -= room;
+        if (++i >= SEGMENTS.length) {
+          i = 0;
+          base += 1;
+        }
+        p = SEGMENTS[i].from;
+      } else {
+        const room = (p - g.from) / perScreen;
+        if (-rem <= room) return Math.max(0, base + p + rem * perScreen);
+        rem += room;
+        if (--i < 0) {
+          if (base === 0) return 0;
+          i = SEGMENTS.length - 1;
+          base -= 1;
+        }
+        p = SEGMENTS[i].to;
+      }
+    }
+    return Math.max(0, base + p);
   }
 
   /** 立即跳转（配合画面溶解过渡使用）。 */
@@ -120,9 +160,9 @@ export class StoryProgressController {
     }
   }
 
-  /** 把像素滚动量换算为进度增量。 */
-  static pixelsToProgress(px: number, viewportH: number): number {
-    return px / (Math.max(320, viewportH) * SCREENS_PER_CYCLE);
+  /** 把像素滚动量换算为屏幕高度。 */
+  static pixelsToScreens(px: number, viewportH: number): number {
+    return px / Math.max(320, viewportH);
   }
 }
 

@@ -26,18 +26,38 @@ export const STAGES: StageDef[] = [
 /**
  * 自动播放节奏与关键镜头保护。
  * seconds：自动播放时这一段持续的秒数；
- * key：关键镜头。快速滚动时会以更低的最高速度经过，保证不会被直接跳过。
+ * key：关键镜头。快速滚动时会以更低的最高速度经过，保证不会被直接跳过；
+ * screens：滚动经过这一段需要的屏幕高度（默认按进度宽度均分），用于让开场等镜头有足够的滚动距离停留。
  */
 export interface Segment {
   from: number;
   to: number;
   seconds: number;
   key?: boolean;
+  screens?: number;
 }
 
+/** 默认情况下，一整圈叙事对应的滚动距离（屏幕高度的倍数） */
+export const SCREENS_PER_CYCLE = 34;
+
+/**
+ * 开场的五个镜头（阶段 1 的前半段，约 25 秒）：先建立鲸鱼的庞大与安宁，再引出磷虾群。
+ * 镜头之间是连续的推、跟、升降与对焦转移，没有跳切。
+ */
+export const OPENING_SHOTS = [
+  { key: 'vista', title: '超远景建立尺度', from: 0.0, to: 0.014 },
+  { key: 'track', title: '侧面全景跟拍', from: 0.014, to: 0.03 },
+  { key: 'below', title: '低角度仰拍', from: 0.03, to: 0.047 },
+  { key: 'eye', title: '眼睛与皮肤细节', from: 0.047, to: 0.061 },
+  { key: 'krill', title: '磷虾群揭示', from: 0.061, to: 0.075 },
+] as const;
+
 export const SEGMENTS: Segment[] = [
-  { from: 0.0, to: 0.035, seconds: 14, key: true }, // 磷虾群首次出现（广角）
-  { from: 0.035, to: 0.075, seconds: 12 },
+  { from: 0.0, to: 0.014, seconds: 5, key: true, screens: 1 }, // 超远景：鲸鱼从远处游入
+  { from: 0.014, to: 0.03, seconds: 5, key: true, screens: 1 }, // 侧面全景跟拍
+  { from: 0.03, to: 0.047, seconds: 5, key: true, screens: 1 }, // 低角度仰拍：身体从上方经过
+  { from: 0.047, to: 0.061, seconds: 5, key: true, screens: 1 }, // 眼睛与皮肤细节
+  { from: 0.061, to: 0.075, seconds: 5.5, key: true, screens: 1.1 }, // 磷虾群揭示，鲸鱼转向
   { from: 0.075, to: 0.11, seconds: 13, key: true }, // 滤食
   { from: 0.11, to: 0.125, seconds: 6 },
   { from: 0.125, to: 0.15, seconds: 8 },
@@ -57,10 +77,16 @@ export const SEGMENTS: Segment[] = [
   { from: 0.8, to: 0.87, seconds: 16, key: true }, // 磷虾重新聚集
   { from: 0.87, to: 0.93, seconds: 12 },
   { from: 0.93, to: 0.96, seconds: 9, key: true }, // 新鲸鱼出现
-  { from: 0.96, to: 1.0, seconds: 9, key: true }, // 循环衔接
+  { from: 0.96, to: 0.98, seconds: 6, key: true }, // 循环衔接
+  { from: 0.98, to: 1.0, seconds: 7, key: true }, // 与开场超远景的节奏一致，接缝处速度连续
 ];
 
 export const CYCLE_SECONDS = SEGMENTS.reduce((s, g) => s + g.seconds, 0);
+
+/** 某一段的滚动长度（屏幕高度） */
+export function segmentScreens(s: Segment): number {
+  return s.screens ?? (s.to - s.from) * SCREENS_PER_CYCLE;
+}
 
 export function segmentAt(p: number): Segment {
   const x = p - Math.floor(p);
@@ -83,8 +109,8 @@ export interface Caption {
 }
 
 export const CAPTIONS: Caption[] = [
-  { from: 0.004, to: 0.034, text: '南方的夏季海洋，阳光穿透海水。', sub: '一头座头鲸正在寻找食物。' },
-  { from: 0.04, to: 0.073, text: '前方，是一大片橙红色的磷虾群。', sub: '每一只磷虾只有手指那么长。' },
+  { from: 0.006, to: 0.026, text: '南方的夏季海洋，一头座头鲸缓缓游来。', sub: '它身长约 14 米，比一辆公交车还要长。' },
+  { from: 0.063, to: 0.0745, text: '前方，出现了点点橙红色的身影。', sub: '磷虾越聚越多。' },
   { from: 0.079, to: 0.112, text: '座头鲸张开大嘴，喉腹褶像手风琴一样撑开。', sub: '它用鲸须把海水滤出，把磷虾留下——这叫滤食。' },
   { from: 0.126, to: 0.152, text: '鲸鱼是哺乳动物，需要回到海面呼吸。' },
   { from: 0.163, to: 0.19, text: '它浮出水面，水波一圈圈向远处扩散。' },

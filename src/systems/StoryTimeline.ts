@@ -71,6 +71,8 @@ export interface EnvState {
   glow: number;
   tone: number;
   rim: number;
+  /** 参考画面的浅海光照（0~1）：灰蓝、通透的海水，画面上缘明亮起伏的海面与密集的光柱（见 LightingManager） */
+  sunlit: number;
 }
 
 export interface EcoState {
@@ -307,6 +309,8 @@ const envKeys = {
   glow: [[0, 0], [0.29, 0], [0.32, 0.45], [0.35, 1], [0.46, 1], [0.495, 0.35], [0.53, 0]] as Keys,
   tone: [[0, 0], [0.29, 0], [0.315, 1], [0.35, 1], [0.375, 0.35], [0.41, 0]] as Keys,
   rim: [[0, 0], [0.292, 0], [0.315, 0.8], [0.34, 1], [0.47, 1], [0.497, 0.3], [0.52, 0]] as Keys,
+  // 下沉的前半段沿用参考画面的光：从闭眼之后开始，鲸鱼弯成低头的弓形时最明显，随深度渐渐沉入深蓝
+  sunlit: [[0, 0], [0.292, 0], [0.31, 1], [0.37, 1], [0.388, 0.8], [0.402, 0.48], [0.416, 0.2], [0.432, 0], [0.99, 0]] as Keys,
 };
 
 const ecoKeys: Record<keyof EcoState, Keys> = {
@@ -374,7 +378,7 @@ export class StoryTimeline {
     whale2: makeWhaleState(),
     krill: { visible: 0, x: 0, y: 0, z: 0, rx: 1, ry: 1, rz: 1, heading: 0, agg: 1, feed: 0, scatter: 0, deep: 0, stray: 0, sx: 0, sy: 0, sz: 0 },
     surface: { aerial: 0, alt: 300, rot: 0, surfacing: 0, breath1: 0, breath2: 0, t: 0 },
-    env: { vis: 70, focusLight: 0, bioGlow: 0, vignette: 0.3, sediment: 0, rayLen: 70, glow: 0, tone: 0, rim: 0 },
+    env: { vis: 70, focusLight: 0, bioGlow: 0, vignette: 0.3, sediment: 0, rayLen: 70, glow: 0, tone: 0, rim: 0, sunlit: 0 },
     eco: { scav: 0, amph: 0, crabs: 0, enrich: 0, sulfo: 0, dwellers: 0 },
     cam: { lagX: 0, lagY: 0, fw: 0, fk: 0, fe: 0, ax: 0, ay: 0, ox: 0, oy: 0, frameH: 20, needW: 20, sx: 0.5, sy: 0.5, elev: 0, lat: 0, wcy: 0, cyAbs: 0 },
     water: { x: 0, y: 0, flowX: 0, flowY: 0, wake: 0 },
@@ -525,6 +529,7 @@ export class StoryTimeline {
     e.glow = this.envT.glow.at(p);
     e.tone = this.envT.tone.at(p);
     e.rim = this.envT.rim.at(p);
+    e.sunlit = clamp(this.envT.sunlit.at(p));
     e.sediment = p > CONTACT_P && p < 0.57 ? secondsAt(p) - secondsAt(CONTACT_P) : 0;
 
     const eco = f.eco;

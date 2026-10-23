@@ -75,6 +75,8 @@ export interface LightingInput {
   tone?: number;
   /** 身体的柔和轮廓光与体积明暗（0~1） */
   rim?: number;
+  /** 参考画面的浅海光照（0~1）：灰蓝、通透的海水，画面上缘明亮起伏的海面，密集的光柱，受光明亮的身体 */
+  sunlit?: number;
 }
 
 /** 一束光在屏幕上的位置：顶部中心、每像素的水平偏移（扇形散开）、宽度与强度 */
@@ -102,8 +104,23 @@ const GLOW_TOP: RGB = [70, 150, 215];
 const GLOW_MID: RGB = [40, 110, 180];
 const GLOW_BOT: RGB = [2, 10, 24];
 
+/**
+ * 参考画面的浅海光照：画面上缘、中部与下缘的海水颜色（不含光柱），从参考画面中光柱之间的海水量出。
+ * 浅处是通透的灰蓝，越深越暗、越偏向深蓝，最后与深海的颜色接上。
+ */
+const SUN_SHALLOW: RGB[] = [[136, 160, 182], [104, 132, 156], [72, 98, 124]];
+const SUN_DEEP: RGB[] = [[34, 66, 98], [20, 46, 76], [8, 22, 44]];
+/** 浅海阳光下物体受光的颜色（略偏冷的中性白） */
+const SUN_TINT: RGB = [0.95, 0.99, 1.02];
+/** 浅海阳光在水中的散射（物体上蒙的一层薄雾）：浅处明亮的灰蓝，深处的深蓝 */
+const SUN_HAZE: RGB = [178, 198, 214];
+const SUN_HAZE_DEEP: RGB = [30, 58, 88];
+
 /** 背景与光束离屏图层的分辨率（相对 CSS 像素） */
 const RAY_RES = 0.25;
+
+/** 记录下来、供颗粒判断是否在光里的光束数 */
+const MAX_BEAMS = 40;
 
 const RAY_LAYERS = [
   { z: 150, count: 0.7, alpha: 0.07, width: 1.25, sway: 0.05, streak: 0, close: false },
@@ -125,12 +142,19 @@ export class LightingManager {
   glow = 0;
   tone = 0;
   rim = 0;
+  sunlit = 0;
+  /** 浅海光照的强弱（0~1）：随深度衰减，但比普通的光束更持久——鲸鱼弯成弓形下沉的那几个镜头仍然明亮 */
+  sunR = 0;
+  /** 远处海水在画面中可见高度的一半（米，用于把参考画面的上下渐变放到对应深度） */
+  private span = 100;
   /** 本帧画出的光束（供颗粒判断自己是否在光里） */
   private readonly beams: RayBeam[] = [];
   private beamCount = 0;
   /** 背景与光束的离屏图层（1/4 分辨率，见 drawBackground） */
   private layer: HTMLCanvasElement | null = null;
   private layerCtx: CanvasRenderingContext2D | null = null;
+  /** 海面波光的平铺图案（建在低分辨率图层上） */
+  private ripple: CanvasPattern | null = null;
   readonly water: RGB = [30, 90, 150];
   private readonly tmpA: RGB = [0, 0, 0];
   private readonly tmpB: RGB = [0, 0, 0];
@@ -148,15 +172,33 @@ export class LightingManager {
     this.vignette = input.vignette;
     this.lookUp = input.lookUp ?? 0;
     this.rayLen = input.rayLen ?? 70;
+    this.sunlit = input.sunlit ?? 0;
     this.glow = input.glow ?? 0;
-    this.tone = input.tone ?? 0;
+    // 浅海光照本身就是通透、不过曝的颜色，不再需要深蓝调色
+    this.tone = (input.tone ?? 0) * (1 - this.sunlit);
     this.rim = input.rim ?? 0;
+    this.sunR = Math.pow(clamp(this.rayAt(this.depth - 10) * 1.8), 0.6);
+    const b = cam.boundsAt(400);
+    this.span = Math.max(1, (b.b - b.t) / 2);
     this.waterAt(this.depth, this.water);
   }
 
   waterAt(y: number, out: RGB): RGB {
     sampleStops(WATER_STOPS, y, out);
     if (this.tone > 0) for (let i = 0; i < 3; i++) out[i] *= lerp(1, TONE[i], this.tone);
+    const sl = this.sunlit;
+    if (sl > 0.001) {
+      // 参考画面：按相对镜头的高度取上 / 中 / 下的颜色，按浅海光照的强弱在浅处与深处的颜色之间过渡
+      const u = clamp((y - this.depth) / this.span, -1, 1) + 1;
+      const i = Math.min(1, Math.floor(u));
+      const t = u - i;
+      const r = this.sunR;
+      for (let c = 0; c < 3; c++) {
+        const a = lerp(SUN_DEEP[i][c], SUN_SHALLOW[i][c], r);
+        const b = lerp(SUN_DEEP[i + 1][c], SUN_SHALLOW[i + 1][c], r);
+        out[c] = lerp(out[c], lerp(a, b, t), sl);
+      }
+    }
     return out;
   }
 
@@ -210,7 +252,20 @@ export class LightingManager {
     }
     const dEff = Math.max(0, z) + (cam ? cam.dist * 0.1 : 0);
     out.fog = clamp(1 - Math.exp(-dEff / Math.max(5, this.vis)), 0, 0.97);
+    // 浅海光照：上方的阳光把身体照得明亮、偏中性，水中的散射光再蒙上一层薄薄的灰蓝
+    const sl = this.sunlit;
+    if (sl > 0.001) {
+      const r = this.sunR;
+      out.light = lerp(out.light, lerp(0.6, 1.08, r), sl);
+      for (let i = 0; i < 3; i++) out.tint[i] = lerp(out.tint[i], SUN_TINT[i], sl * r);
+    }
     this.waterAt(y, out.fogC);
+    if (sl > 0.001) {
+      const r = this.sunR;
+      const k = sl * (0.04 + 0.08 * r);
+      for (let i = 0; i < 3; i++) out.fogC[i] = lerp(out.fogC[i], lerp(SUN_HAZE_DEEP[i], SUN_HAZE[i], r), k / Math.max(1e-3, out.fog + (1 - out.fog) * k));
+      out.fog += (1 - out.fog) * k;
+    }
     return out;
   }
 
@@ -237,6 +292,7 @@ export class LightingManager {
     ctx.globalCompositeOperation = 'source-over';
     this.paintWater(rc, ctx);
     this.paintRays(rc, ctx);
+    this.paintSurface(rc, ctx);
     out.setTransform(1, 0, 0, 1, 0, 0);
     out.globalAlpha = 1;
     out.globalCompositeOperation = 'source-over';
@@ -255,7 +311,7 @@ export class LightingManager {
     const mid: RGB = [0, 0, 0];
     this.waterAt((b.t + b.b) / 2, mid);
     // 下沉：自上而下的散射天光——开阔、清澈的深蓝海水，上方略亮、下方渐深，深海中也保留一点层次
-    const gl = this.glow;
+    const gl = this.glow * (1 - this.sunlit);
     if (gl > 0.01) {
       const k = gl * (1 - 0.55 * smoothstep(80, 1500, cam.cy));
       mixRGB(top, GLOW_TOP, 0.22 * k, top);
@@ -304,8 +360,12 @@ export class LightingManager {
   private paintRays(rc: RenderCtx, ctx: CanvasRenderingContext2D): void {
     const { cam, w, h, time, quality } = rc;
     this.beamCount = 0;
-    const sun = this.rayAt(cam.cy - 10) * this.raysMul * lerp(1, 0.8, this.tone);
+    // 浅海光照：参考画面里密密的光柱从海面一直照到画面下缘
+    const sl = this.sunlit;
+    const sun = lerp(this.rayAt(cam.cy - 10), this.sunR, sl) * this.raysMul * lerp(1, 0.8, this.tone);
     if (sun < 0.02) return;
+    const dense = 1 + 1.4 * sl;
+    const strong = 1 + 0.55 * sl;
     ctx.globalCompositeOperation = 'lighter';
     const tex = textures().ray;
     // 太阳在画面上方偏左的远处：所有光束从这个方向散开
@@ -316,12 +376,12 @@ export class LightingManager {
       // 近处的一层只在镜头靠近时出现：远景里它会与远处的光束叠成一团过亮的光斑
       const near = layer.close ? 1 - smoothstep(45, 90, cam.shot.frameH) : 1;
       if (near < 0.02) continue;
-      const n = Math.max(2, Math.round(quality.rays * layer.count));
+      const n = Math.max(2, Math.round(quality.rays * layer.count * dense));
       const s = cam.scaleAt(layer.z);
       const surfaceY = cam.py + (0 - cam.cy) * s;
       const topY = Math.max(-h * 0.1, surfaceY);
       if (topY > h) continue;
-      const len = h * 1.3;
+      const len = h * (1.3 + 0.8 * sl);
       const span = w * 1.8;
       const spacing = span / n;
       const camShift = -(cam.cx * s * 0.6);
@@ -331,12 +391,12 @@ export class LightingManager {
         const base = ((((i + seed * 0.6) * spacing + camShift + sway) % span) + span) % span - w * 0.4;
         const width = spacing * (0.35 + seed * 0.7) * layer.width;
         const flick = 0.55 + 0.45 * (0.5 + 0.5 * noise1(time * 0.13 + seed * 50, 5 + L));
-        const a = Math.min(1, layer.alpha * sun * flick * near);
+        const a = Math.min(1, layer.alpha * sun * flick * near * strong);
         // 扇形：光束的方向指向上方的太阳；越往下越宽
         const slope = (base - apexX) / (topY - apexY);
         const w1 = width * FAN_SPREAD;
         this.drawBeam(ctx, tex, base, topY, slope, w1, len, a);
-        if (this.beamCount < 24) this.beams[this.beamCount++] = { x: base, top: topY, slope, w0: width, w1, len, a };
+        if (this.beamCount < MAX_BEAMS) this.beams[this.beamCount++] = { x: base, top: topY, slope, w0: width, w1, len, a };
         // 光束内部更亮、更细的光丝，形成层次
         if (layer.streak > 0 && seed > 0.35) {
           const off = (hash1(i * 13 + L) - 0.5) * width * 0.5;
@@ -344,6 +404,51 @@ export class LightingManager {
         }
       }
     }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /**
+   * 参考画面里的海面：从下方斜着仰望，画面上缘是一道明亮的天光，上面是一排排被拉长的波光——
+   * 近处（画面最上方）宽大、流动得快，越靠近地平线越扁、越密、越暗，下缘柔和地融进光柱里。
+   * 与海水、光束画在同一张低分辨率图层上（波光本来就柔和），每排波光是一次按纹理坐标缩放的平铺填充。
+   */
+  private paintSurface(rc: RenderCtx, ctx: CanvasRenderingContext2D): void {
+    const lit = this.sunlit * this.sunR;
+    if (lit < 0.02) return;
+    const { w, h, time } = rc;
+    const k0 = RAY_RES;
+    const hb = h * 0.24;
+    // 光束按各自的斜率改过变换，这里先恢复图层的坐标（CSS 像素）
+    ctx.setTransform(k0, 0, 0, k0, 0, 0);
+    const g = ctx.createLinearGradient(0, 0, 0, hb * 1.8);
+    g.addColorStop(0, `rgba(214,234,247,${0.32 * lit})`);
+    g.addColorStop(0.25, `rgba(192,220,240,${0.17 * lit})`);
+    g.addColorStop(0.55, `rgba(172,206,232,${0.07 * lit})`);
+    g.addColorStop(1, 'rgba(160,200,230,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, hb * 1.8);
+    const tex = textures().ripple;
+    if (!this.ripple) this.ripple = ctx.createPattern(tex, 'repeat-x');
+    ctx.fillStyle = this.ripple!;
+    ctx.globalCompositeOperation = 'lighter';
+    let y0 = -hb * 0.08;
+    for (let k = 0; k < 8; k++) {
+      const hgt = hb * 0.3 * Math.pow(0.7, k);
+      // 每排两层错开、宽窄不同的波光，彼此重叠，避免看出整齐的平铺
+      for (let j = 0; j < 2; j++) {
+        const tile = hgt * (j ? 5.3 : 8.1);
+        const drift = time * tile * (j ? -0.031 : 0.047) + hash1(k * 5 + j) * tile;
+        const off = (drift % tile) - tile;
+        const sx = tile / tex.width;
+        const sy = (hgt * 1.6) / tex.height;
+        ctx.globalAlpha = (j ? 0.11 : 0.15) * lit * (1 - k / 9) * (1 - smoothstep(0.2, 0.95, y0 / hb));
+        ctx.setTransform(k0 * sx, 0, 0, k0 * sy, k0 * off, k0 * (y0 - hgt * 0.3 * j));
+        ctx.fillRect(0, 0, (w - off) / sx, tex.height);
+      }
+      y0 += hgt;
+    }
+    ctx.setTransform(k0, 0, 0, k0, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
   }
@@ -362,7 +467,8 @@ export class LightingManager {
     const { ctx, w, h, dpr } = rc;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const deep = smoothstep(150, 1200, this.depth);
-    const v = this.vignette;
+    // 参考画面几乎没有暗角
+    const v = this.vignette * (1 - 0.55 * this.sunlit);
     if (v > 0.01) {
       const r = Math.hypot(w, h) * 0.62;
       const g = ctx.createRadialGradient(w / 2, h * 0.48, r * (0.42 - deep * 0.1), w / 2, h * 0.5, r);

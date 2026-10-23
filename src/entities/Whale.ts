@@ -1322,7 +1322,8 @@ export class Whale {
     const n = b.n;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    // 背部：宽而淡的受光面
+    // 背部：宽而淡的受光面（浅海的阳光下更亮，像参考画面里被照亮的背）
+    const sun = 1 + 1.2 * rc.light.sunlit * rc.light.sunR;
     ctx.beginPath();
     ctx.moveTo(b.ux[0], b.uy[0]);
     through(ctx, b.ux, b.uy, 0, n - 1);
@@ -1330,7 +1331,7 @@ export class Whale {
       [2.6, 0.07],
       [1.4, 0.08],
     ] as const) {
-      ctx.strokeStyle = `rgba(185,225,250,${a * k})`;
+      ctx.strokeStyle = `rgba(185,225,250,${a * k * sun})`;
       ctx.lineWidth = lw;
       ctx.stroke();
     }

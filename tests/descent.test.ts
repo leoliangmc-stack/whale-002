@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { secondsAt, WORLD } from '../src/config/stages';
 import { CONTACT_P, DESCENT_END, DESCENT_START, DescentMotion, lowestBelow } from '../src/systems/DescentMotion';
 import { StoryTimeline, Y_REST } from '../src/systems/StoryTimeline';
+import { LightingManager } from '../src/systems/LightingManager';
+import { Camera } from '../src/core/Camera';
 import { WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
 
 const tl = new StoryTimeline();
@@ -345,6 +347,41 @@ describe('descent: a graceful, quiet drift into the deep', () => {
       expect(Math.atan2(f.flowX, f.flowY), `p=${p.toFixed(2)}`).toBeGreaterThan(0.17);
       expect(Math.atan2(f.flowX, f.flowY), `p=${p.toFixed(2)}`).toBeLessThan(0.52);
     }
+  });
+
+  it('the upper descent has the light of the reference painting: pale grey-blue water, bright from above', () => {
+    const env = (p: number) => ({ ...tl.evaluate(p, 0).env });
+    for (let p = 0.31; p <= 0.37; p += 0.01) expect(env(p).sunlit, `p=${p.toFixed(2)}`).toBeCloseTo(1, 3);
+    expect(env(0.29).sunlit).toBe(0);
+    expect(env(0.44).sunlit).toBe(0);
+    // 鲸鱼弯成低头弓形的镜头里：画面上、中、下的海水颜色（不含光柱）与参考画面中光柱之间的海水相近
+    const water = (p: number) => {
+      const f = tl.evaluate(p, 0);
+      const w = { ...f.whale1 };
+      const shot = { tx: 0, ty: 0, frameH: 0, sx: 0, sy: 0, elev: 0, lat: 0 };
+      StoryTimeline.shotFrom(f, w, w, 1.6, shot);
+      const cam = new Camera();
+      cam.setViewport(1600, 1000);
+      cam.setShot(shot);
+      const light = new LightingManager();
+      const e = f.env;
+      light.update(cam, { vis: e.vis, focusLight: 0, focusX: 0, focusY: 0, bioGlow: 0, rays: 1, vignette: 0, rayLen: e.rayLen, glow: e.glow, tone: e.tone, rim: e.rim, sunlit: e.sunlit });
+      const b = cam.boundsAt(400);
+      return [b.t, cam.cy, b.b].map((y) => light.waterAt(y, [0, 0, 0]));
+    };
+    const [top, mid, bot] = water(0.356);
+    for (const c of [top, mid, bot]) {
+      // 灰蓝：蓝色只比红色高出四五十，而不是饱和的青蓝
+      expect(c[2] - c[0]).toBeGreaterThan(30);
+      expect(c[2] - c[0]).toBeLessThan(60);
+    }
+    expect(top[0]).toBeGreaterThan(115);
+    expect(mid[0]).toBeGreaterThan(85);
+    expect(bot[0]).toBeGreaterThan(50);
+    expect(top[0] - bot[0]).toBeGreaterThan(40);
+    // 深海仍然是深蓝
+    const [, deep] = water(0.45);
+    expect(deep[0] + deep[1] + deep[2]).toBeLessThan(200);
   });
 
   it('sunlight shafts follow it down, then fade before a thousand metres', () => {

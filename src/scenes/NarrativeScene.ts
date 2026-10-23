@@ -81,6 +81,7 @@ export class NarrativeScene {
       glow: f.env.glow,
       tone: f.env.tone,
       rim: f.env.rim,
+      sunlit: f.env.sunlit,
     });
 
     // 磷虾：由正在接近的那头鲸鱼提供嘴与吻端位置

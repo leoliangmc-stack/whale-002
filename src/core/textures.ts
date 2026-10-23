@@ -1,4 +1,4 @@
-import { hash2, rng } from './math';
+import { hash2, rng, TAU } from './math';
 
 /**
  * 程序化生成的小型纹理（精灵）。正式美术资源到位后，可通过 AssetRegistry
@@ -192,6 +192,48 @@ export function waveTile(size = 256, seed = 5): Tex {
   return c;
 }
 
+/**
+ * 从水下仰望的海面波光（可平铺）：一道道被拉长、边缘起伏的明亮波峰，像参考画面上缘那层发亮的水面。
+ * 每一层是沿竖向重复、横向缓缓起伏的波峰线，几层不同疏密的叠在一起。
+ */
+export function surfaceRippleTile(w = 256, h = 128, seed = 9): Tex {
+  const [c, ctx] = makeCanvas(w, h);
+  const img = ctx.createImageData(w, h);
+  const r = rng(seed);
+  const layers = [3, 4, 6, 9].map((ky, i) => ({
+    ky,
+    kx: 1 + (i % 3),
+    a1: 0.12 + r() * 0.1,
+    a2: 0.05 + r() * 0.05,
+    p0: r(),
+    p1: r(),
+    p2: r(),
+    wt: 1 - i * 0.18,
+  }));
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const u = x / w;
+      const v = y / h;
+      let s = 0;
+      for (const L of layers) {
+        const ph = v * L.ky + L.p0 + L.a1 * Math.sin(TAU * (u * L.kx + L.p1)) + L.a2 * Math.sin(TAU * (u * (L.kx + 2) + L.p2));
+        const crest = Math.pow(0.5 + 0.5 * Math.cos(TAU * ph), 7);
+        // 波峰沿横向时亮时暗，断成一段段
+        const seg = 0.55 + 0.45 * Math.sin(TAU * (u * (L.kx + 3) + L.p2 + v * 0.5));
+        s += crest * seg * L.wt;
+      }
+      const a = Math.min(1, Math.pow(s, 1.2));
+      const idx = (y * w + x) * 4;
+      img.data[idx] = 255;
+      img.data[idx + 1] = 255;
+      img.data[idx + 2] = 255;
+      img.data[idx + 3] = Math.round(a * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
 /** 磷虾精灵：头朝右，橙红色半透明身体、细足与黑色复眼。 */
 export function krillSprite(size = 48, deep = false): Tex {
   const [c, ctx] = makeCanvas(size, Math.round(size * 0.5));
@@ -318,6 +360,7 @@ export interface TextureSet {
   caustic: Tex;
   skin: Tex;
   wave: Tex;
+  ripple: Tex;
   krill: Tex;
   krillDeep: Tex;
   sediment: Tex;
@@ -338,6 +381,7 @@ export function textures(): TextureSet {
     caustic: causticTile(256),
     skin: skinTexture(),
     wave: waveTile(256),
+    ripple: surfaceRippleTile(),
     krill: krillSprite(48),
     krillDeep: krillSprite(48, true),
     sediment: sedimentTile(),

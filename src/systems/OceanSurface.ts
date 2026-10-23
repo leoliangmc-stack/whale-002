@@ -43,7 +43,8 @@ export class OceanSurface {
     if (cam.cy < 0.5 || cam.cy > 80) return;
     const py = cam.py;
     if (py <= 0) return;
-    const sun = clamp(1 - cam.cy / 80);
+    // 浅海光照时画面上缘已有一道明亮的海面（见 LightingManager.paintSurface），这里随之减弱
+    const sun = clamp(1 - cam.cy / 80) * (1 - 0.7 * rc.light.sunlit);
     // 行 y 处视线击中海面的距离 dz：y = py − cy·f / dz
     const hitAt = (dz: number) => py - (cam.cy * cam.f) / Math.max(0.5, dz);
     const yFade = Math.min(py, hitAt(110));

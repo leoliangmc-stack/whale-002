@@ -76,6 +76,12 @@ export const FIN_RECT = [1620, 335, 368, 229] as const;
 /** 胸鳍转动的支点（画框像素）：鳍根中部，肩关节在它上方的体内 */
 export const FIN_PIVOT = { x: 1912, y: 362 };
 
+/**
+ * 俯视的背面画（dorsal.webp，由 scripts/dorsal-art.py 用 whale-kit 腹面画的轮廓与游动画的背部皮肤生成）：
+ * 吻端在右、尾叶在左，体轴水平；吻端尖与尾叶缺刻所在的列、体轴所在的行（画像素）。
+ */
+export const DORSAL_ART = { w: 2048, h: 776, snoutX: 2047, notchX: 103, axisY: 388, flukeX: 260 } as const;
+
 /** 一张身体画及其预先缩小的版本（1/2、1/4、1/8）：远处的鲸鱼用小图绘制，避免缩小时的条纹与闪烁 */
 export interface Mipped {
   levels: CanvasImageSource[];
@@ -101,6 +107,8 @@ export interface WhaleArtSet {
   skeletonMask: AlphaMask;
   eyeOpen: HTMLImageElement;
   eyeClosed: HTMLImageElement;
+  /** 俯视的背面画（高空俯视镜头） */
+  dorsal: Mipped;
 }
 
 function alphaMask(img: HTMLImageElement, step: number): AlphaMask {
@@ -220,11 +228,11 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 /** 加载全部绘画（只加载一次）。 */
 export function loadWhaleArt(base = './assets/whale/'): Promise<WhaleArtSet | null> {
   if (!loading) {
-    loading = Promise.all(['swim', 'lunge', 'skeleton', 'eye-open', 'eye-closed', 'swim-fin-under'].map((n) => loadImage(base + n + '.webp')))
+    loading = Promise.all(['swim', 'lunge', 'skeleton', 'eye-open', 'eye-closed', 'swim-fin-under', 'dorsal'].map((n) => loadImage(base + n + '.webp')))
       .then(async (imgs) => {
         // 先解码，避免第一次绘制时卡顿
         await Promise.all(imgs.map((i) => i.decode?.().catch(() => undefined)));
-        const [swim, lunge, skeleton, eyeOpen, eyeClosed, under] = imgs;
+        const [swim, lunge, skeleton, eyeOpen, eyeClosed, under, dorsal] = imgs;
         const cut = cutFin(swim, under);
         art = {
           swim: mip(swim),
@@ -235,6 +243,7 @@ export function loadWhaleArt(base = './assets/whale/'): Promise<WhaleArtSet | nu
           skeletonMask: alphaMask(skeleton, 2),
           eyeOpen,
           eyeClosed,
+          dorsal: mip(dorsal, DORSAL_ART.w, DORSAL_ART.h),
         };
         return art;
       })

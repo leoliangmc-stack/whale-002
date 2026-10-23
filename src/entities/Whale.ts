@@ -46,7 +46,7 @@ export interface WhaleState {
   /** 近侧 / 远侧胸鳍随水流的被动摆动（弧度，正值向后上方抬起）。下沉动作层的输出，不直接驱动画中的胸鳍（见 fin） */
   finN: number;
   finF: number;
-  /** 身体的弓形（米，头尾相对体轴中部下垂的量，见 WhaleBody.archShape）：下沉时舒展的弧线 */
+  /** 身体的弓形程度 0~1（见 WhaleBody.archAngle）：下沉时头尾从胸腹部垂下的弧线 */
   arc: number;
   /** 画中胸鳍绕根部的转动（弧度，正值向下张开、离开身体，负值向后贴近腹部）：游动时配合转向、上浮与滑行 */
   fin: number;

@@ -45,18 +45,24 @@ const SINK: Keys = [
   [0.45, 0.43], [0.475, 0.37], [0.492, 0.3], [DESCENT_END, 0.3],
 ];
 /**
- * 身体的弧度（米，头尾相对体轴中部下垂的量）：失去肌张力之后，沉重的头部低垂、尾柄顺着长长的弧线放松，
- * 整个身体呈一道舒展的弓形；接近海床时随下沉放缓而收拢，交给静卧姿态。
+ * 身体的弓形程度（0~1，见 WhaleBody.archAngle）：失去肌张力之后，身体从浮力最大的胸腹部“挂”下来，
+ * 沉重的头部与前半身斜向下方，尾柄顺着一道长弧垂下。弓形随低头一起形成（尾部因此几乎留在原来的高度），
+ * 在深海中保持；接近海床时随下沉放缓而舒展开，交给静卧姿态。
  */
 const ARC: Keys = [
-  [DESCENT_START, 0], [0.305, 0], [0.318, 0.18], [0.332, 0.55], [0.35, 0.88], [0.37, 1], [0.45, 1],
-  [0.472, 0.8], [0.487, 0.42], [CONTACT_P, 0.22], [DESCENT_END, 0],
+  [DESCENT_START, 0], [0.322, 0], [0.328, 0.03], [0.334, 0.14], [0.34, 0.38], [0.346, 0.63], [0.352, 0.83],
+  [0.36, 0.95], [0.368, 1], [0.44, 1], [0.452, 0.9], [0.462, 0.66], [0.472, 0.37], [0.48, 0.17], [0.487, 0.06],
+  [CONTACT_P, 0.02], [DESCENT_END, 0],
 ];
-const ARC_MAX = 1.15;
-/** 头重力矩（rad/s²）：比浮力变化早约两秒，头部先沉 */
-const HEAD: Keys = [
-  [DESCENT_START, 0], [0.322, 0], [0.328, 0.016], [0.336, 0.06], [0.344, 0.084], [0.365, 0.088], [0.41, 0.074],
-  [0.45, 0.066], [0.475, 0.048], [0.49, 0.03], [0.497, 0.012], [DESCENT_END, 0],
+/**
+ * 低头的目标角度（弧度，胸部体轴的俯仰）：头部更重，身体慢慢转成约 43° 的低头姿态并保持，
+ * 接近海床时，水垫让下沉放缓，身体缓缓放平，前腹先触底。
+ * 力矩 = PITCH_K ×（目标 − 当前），所以姿态是被“拉”过去的，带着惯性与滞后，而不是直接设定。
+ */
+const TILT: Keys = [
+  [DESCENT_START, 0], [0.322, 0], [0.328, 0.05], [0.334, 0.2], [0.34, 0.42], [0.346, 0.61], [0.352, 0.71],
+  [0.36, 0.775], [0.41, 0.77], [0.44, 0.74], [0.452, 0.62], [0.462, 0.43], [0.472, 0.24], [0.482, 0.09],
+  [0.49, 0.035], [0.497, 0.02], [DESCENT_END, 0],
 ];
 /** 贴近海床时被挤压的水垫阻力（线性阻尼） */
 const CUSHION: Keys = [[DESCENT_START, 0], [0.464, 0], [0.478, 0.22], [0.488, 0.7], [0.495, 1.5], [DESCENT_END, 2.2]];
@@ -77,8 +83,8 @@ const DRAG_Y2 = 0.064;
 const DRAG_Y1 = 0.06;
 /** 尾叶推力系数：幅度 × 频率 → 推力 */
 const THRUST = 4.3;
-/** 低头下沉时顺着体轴向前滑行：身体像一架没有动力的滑翔机，斜斜地漂向深处 */
-const GLIDE = 0.85;
+/** 低头下沉时顺着体轴向前滑一点：低垂的头部带着身体斜斜地沉向深处，但仍然是在下沉，而不是游下去 */
+const GLIDE = 0.26;
 /** 俯仰：自然频率约 9 秒、接近临界阻尼，只会有一次很轻的回摆 */
 const PITCH_K = 0.49;
 const PITCH_C = 1.26;
@@ -209,7 +215,7 @@ export class DescentMotion {
     const beatAmp = tr(BEAT_AMP);
     const beatFreq = tr(BEAT_FREQ);
     const sinkT = tr(SINK);
-    const headT = tr(HEAD);
+    const tiltT = tr(TILT);
     const cushT = tr(CUSHION);
     const hideT = tr(HIDE);
     const stirT = tr(STIR);
@@ -236,8 +242,8 @@ export class DescentMotion {
     const nodL = new Lag2(TAU / 2.2, 0.7);
     const finL = new Lag2(TAU / 2.8, 0.42);
     const finFarL = new Lag2(TAU / 3.4, 0.38);
-    // 身体的弓形：很慢的二阶跟随，形成与收拢都是一个舒缓的过程
-    const arcL = new Lag2(TAU / 6, 0.85);
+    // 身体的弓形：缓慢的二阶跟随，形成与舒展都是一个舒缓的过程
+    const arcL = new Lag2(TAU / 5, 0.85);
 
     const steps = Math.ceil(this.duration / SIM_DT);
     const every = Math.round(1 / (SIM_DT * SAMPLE_HZ));
@@ -265,9 +271,9 @@ export class DescentMotion {
         const n2 = 0.65 * noise1(t * 0.31, 22) + 0.35 * noise1(t * 0.61, 25);
         const n3 = 0.65 * noise1(t * 0.27, 23) + 0.35 * noise1(t * 0.57, 26);
         flexT = 0.11 * flow - 4.1 * om + stir * 0.19 * n1;
-        // 尾叶比尾柄更软：随尾柄的运动反向滞后
-        flukeT = 0.041 * flow - 0.32 * flexL.v + stir * 0.06 * n1;
-        nodT = 1.9 * om + 0.012 * flow;
+        // 尾叶：下沉时自下而上的水流把它托向尾柄的延长线；比尾柄更软，随尾柄的运动反向滞后
+        flukeT = 0.11 * flow - 0.32 * flexL.v + stir * 0.06 * n1;
+        nodT = 1.7 * om + 0.012 * flow;
         finT = 0.088 * flow + 0.105 * fwd - 1.5 * om + stir * 0.1 * n2;
         finFarT = 0.076 * flow + 0.093 * fwd - 1.2 * om + stir * 0.08 * n3;
         if (i === 0) {
@@ -315,8 +321,8 @@ export class DescentMotion {
       const ry = vy - wc;
       let ax = thrust - DRAG_X2 * rx * Math.abs(rx) - DRAG_X1 * rx + GLIDE * Math.max(0, vy) * Math.sin(th);
       let ay = sinkT.at(p) - DRAG_Y2 * ry * Math.abs(ry) - (DRAG_Y1 + cushT.at(p)) * ry;
-      // 俯仰：头重力矩 − 水动力回正 − 阻尼，叠加极轻的水流扰动
-      let aw = headT.at(p) - PITCH_K * th - PITCH_C * om + stir * (0.013 * noise1(t * 0.071, 9) + 0.005 * noise1(t * 0.19, 10));
+      // 俯仰：被拉向低头的目标角度（头重力矩与水动力回正之差）− 阻尼，叠加极轻的水流扰动
+      let aw = PITCH_K * (tiltT.at(p) - th) - PITCH_C * om + stir * (0.013 * noise1(t * 0.071, 9) + 0.005 * noise1(t * 0.19, 10));
 
       const yTrue = y + hidden;
       // 只在接近海床时检测接触（身体最低点不会低于参考点下方 5 米）
@@ -356,7 +362,7 @@ export class DescentMotion {
         nodL.step(nodT, SIM_DT);
         finL.step(finT, SIM_DT);
         finFarL.step(finFarT, SIM_DT);
-        arcL.step(ARC_MAX * arcT.at(p) * (1 + 0.08 * noise1(t * 0.09, 27)), SIM_DT);
+        arcL.step(arcT.at(p) * (1 + 0.06 * noise1(t * 0.09, 27)), SIM_DT);
       }
     }
     return { y: T.y, pitch: T.pitch, hideInt };

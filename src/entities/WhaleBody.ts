@@ -9,7 +9,8 @@ import { ART_EYE_S } from './WhaleArt';
  * 剖面是从绘画（entities/WhaleArt.ts）的轮廓量出来的，所以碰撞、着陆与分解都与画面一致：
  *  - 游动：尾鳍上下摆动（须鲸靠尾叶上下拍水推进）；
  *  - 滤食：下颌绕颌关节张开，喉腹褶向下鼓起（画面在游动与张嘴两张画之间过渡）；
- *  - 下沉：尾柄、尾叶与头部的被动弯曲（由下沉动作层给出，见 systems/DescentMotion.ts）；
+ *  - 下沉：头尾从胸腹部垂下的弓形（见 archAngle），以及尾柄、尾叶与头部的被动弯曲
+ *    （由下沉动作层给出，见 systems/DescentMotion.ts）；
  *  - 静卧：躯干压入海底软泥，头部微微放低，尾柄顺着重量缓缓垂向海床，身体略向镜头一侧侧倾
  *    （见 restSpineDY / restRoll）。
  * 鲸鱼骨骼使用同一条脊线定位，保证分解时骨骼与身体严格对齐。
@@ -262,17 +263,27 @@ export function strokeWarp(ph: number): number {
   return ph + 0.2 * Math.sin(ph - 1.38);
 }
 
+// ------------------------------------------------------------------ 下沉的弓形
+// 失去肌张力的身体从浮力最大的胸腹部“挂”下来：沉重的头部与前半身几乎笔直地斜向下方，
+// 弯曲集中在身体后半段，背部在体长约七成处拱起，尾柄顺着一道长弧垂下，尾叶斜向下方。
+// 转角从参考画面中量出：前半身约 45° 低头，尾端相对胸部转过约 77°（画面上尾端斜向下约 34°）。
+
+/** 尾端相对参考点的转角（弧度） */
+const ARCH_TAIL = 1.34;
+/** 头部在颈部附近再多低一点（弧度） */
+const ARCH_HEAD = 0.07;
+
 /**
- * 弓形的形状：以体轴中部（参考点）为顶，向头尾两端平滑下垂，参考点处位移与斜率都为零。
- * 尾端下垂 1，头部较短、较重，下垂 0.75；曲率沿身体连续变化，没有折角。
+ * 弓形的转角场（弧度）：脊线在 s 处指向吻端的方向相对参考点转过的角度，正值使该处更向下。
+ * 参考点处转角与曲率都为零，曲率沿身体连续变化，在背部拱起处最大，尾端重新变直。
  */
-export function archShape(s: number): number {
+export function archAngle(s: number): number {
   if (s >= S_REF) {
     const t = (s - S_REF) / (1 - S_REF);
-    return t * t * (1.15 - 0.15 * t);
+    return -ARCH_TAIL * Math.pow(t * t * (3 - 2 * t), 1.15);
   }
-  const t = (S_REF - s) / S_REF;
-  return 0.75 * t * t;
+  const t = clamp((S_REF - s) / 0.3);
+  return ARCH_HEAD * t * t * (3 - 2 * t);
 }
 
 export interface WhaleShape {
@@ -292,7 +303,7 @@ export interface WhaleShape {
   nod: number;
   /** 尾叶被动偏转（弧度，正值尾叶上翘） */
   fluke: number;
-  /** 身体的弓形（米，头尾相对体轴中部下垂的量）：下沉时失去肌张力后的舒展弧线 */
+  /** 身体的弓形程度 0~1（见 archAngle）：下沉时失去肌张力后，头尾从胸腹部垂下的弧线 */
   arc: number;
   /** 软组织收缩（分解）0~1 */
   shrink: number;
@@ -384,7 +395,6 @@ export class WhaleBody {
       const h = 1 - smoothstep(0, 0.38, s);
       dy += sh.nod * h * h;
     }
-    if (sh.arc !== 0) dy += sh.arc * archShape(s);
     return dy;
   }
 
@@ -414,6 +424,7 @@ export class WhaleBody {
         px[i] += (x - px[i]) * k;
       }
     }
+    if (sh.arc !== 0) this.bend(sh.arc);
     for (let i = 0; i < n; i++) {
       const a = Math.max(0, i - 1);
       const b = Math.min(n - 1, i + 1);
@@ -514,6 +525,43 @@ export class WhaleBody {
     const lead = 0.55 * (sh.swim * Math.cos(sh.phase - Math.PI * 2 * 0.72) + sh.beat * Math.cos(sh.beatPh - Math.PI * 2 * 0.72));
     // 静卧时尾叶如何落在海床上由 Whale 按画中尾叶的形状约束（见 Whale.flukeFor）
     this.flukeAngle = this.tailAngle - lead + sh.fluke;
+  }
+
+  /**
+   * 弓形弯曲：把转角场沿脊线按弧长积分出弯曲的体轴（体长不变，大角度也不会拉长或压扁），
+   * 再把其余的小幅位移（摆尾、被动弯曲、静卧）沿弯曲体轴的切线与法线放回去。
+   */
+  private bend(k: number): void {
+    const { n, s, px, py } = this;
+    const L = WHALE_LEN;
+    // 腹侧轮廓数组随后会重新计算，这里借来存放弯曲的体轴
+    const bx = this.bx;
+    const by = this.by;
+    // 参考点处转角与曲率为零：从离它最近的采样开始向两端积分
+    const iRef = this.indexAt(S_REF);
+    bx[iRef] = L * (S_REF - s[iRef]);
+    by[iRef] = 0;
+    for (let i = iRef + 1; i < n; i++) {
+      const a = k * archAngle((s[i - 1] + s[i]) / 2);
+      const d = L * (s[i] - s[i - 1]);
+      bx[i] = bx[i - 1] - d * Math.cos(a);
+      by[i] = by[i - 1] - d * Math.sin(a);
+    }
+    for (let i = iRef - 1; i >= 0; i--) {
+      const a = k * archAngle((s[i] + s[i + 1]) / 2);
+      const d = L * (s[i + 1] - s[i]);
+      bx[i] = bx[i + 1] + d * Math.cos(a);
+      by[i] = by[i + 1] + d * Math.sin(a);
+    }
+    for (let i = 0; i < n; i++) {
+      const a = k * archAngle(s[i]);
+      const c = Math.cos(a);
+      const sn = Math.sin(a);
+      const ax = px[i] - L * (S_REF - s[i]);
+      const dy = py[i];
+      px[i] = bx[i] + c * ax - sn * dy;
+      py[i] = by[i] + sn * ax + c * dy;
+    }
   }
 
   indexAt(sv: number): number {

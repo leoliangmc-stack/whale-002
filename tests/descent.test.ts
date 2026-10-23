@@ -2,14 +2,34 @@ import { describe, expect, it } from 'vitest';
 import { secondsAt, WORLD } from '../src/config/stages';
 import { CONTACT_P, DESCENT_END, DESCENT_START, DescentMotion, lowestBelow } from '../src/systems/DescentMotion';
 import { StoryTimeline, Y_REST } from '../src/systems/StoryTimeline';
-import { S_REF, WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
+import { WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
 
 const tl = new StoryTimeline();
 const d = tl.descent;
 const whale = (p: number) => ({ ...tl.evaluate(p, -0.05).whale1 });
 const flow = (p: number) => ({ ...tl.evaluate(p, -0.05).water });
-const SNOUT = WHALE_LEN * S_REF;
-const TAIL = WHALE_LEN * (1 - S_REF);
+const body = new WhaleBody();
+
+/** 按进度 p 的姿态计算身体几何（含弓形与被动弯曲） */
+function shape(p: number): WhaleBody {
+  const w = whale(p);
+  body.compute({ swim: 0, phase: 0, beat: w.beat, beatPh: w.beatPh, mouth: 0, throat: 0, rest: w.rest, flex: w.flex, nod: w.nod, fluke: w.fluke, arc: w.arc, shrink: 0 });
+  return body;
+}
+
+/** 脊线在 s 处的世界坐标 */
+function spineAt(p: number, s: number): { x: number; y: number } {
+  const w = whale(p);
+  const f = shape(p).frame(s, 0, { x: 0, y: 0, a: 0 });
+  const c = Math.cos(w.pitch);
+  const sn = Math.sin(w.pitch);
+  return { x: w.x + f.x * c - f.y * sn, y: w.y + f.x * sn + f.y * c };
+}
+
+/** 脊线在 s 处、画面上的倾角（弧度，指向吻端的方向，正值向下） */
+function tangent(p: number, s: number): number {
+  return whale(p).pitch + shape(p).frame(s, 0, { x: 0, y: 0, a: 0 }).a;
+}
 
 /** 以故事时间（自动播放的秒数）为步长扫描 [p0, p1] */
 function sweep(p0: number, p1: number, dt = 1 / 20): Array<{ p: number; t: number }> {
@@ -66,10 +86,10 @@ describe('descent A: stops swimming before it sinks', () => {
 
 describe('descent B: slowly loses its balance', () => {
   it('the head dips first while the tail keeps its height, then the body follows', () => {
-    // 只比较相对水体的位置（去掉被压缩的深度）
+    // 只比较相对水体的位置（去掉被压缩的深度）；吻端与尾端取弯曲之后的实际位置
     const vis = (p: number) => d.waterDepth(p) - whale(p).y;
-    const snout = (p: number) => whale(p).y + SNOUT * Math.sin(whale(p).pitch) + vis(p);
-    const tail = (p: number) => whale(p).y - TAIL * Math.sin(whale(p).pitch) + vis(p);
+    const snout = (p: number) => spineAt(p, 0).y + vis(p);
+    const tail = (p: number) => spineAt(p, 1).y + vis(p);
     const p0 = first(0.315, 0.4, (p) => whale(p).pitch > 0.005);
     const s0 = snout(p0);
     const t0 = tail(p0);
@@ -84,6 +104,9 @@ describe('descent B: slowly loses its balance', () => {
     const p2 = sweep(p1, 0.4).find((x) => x.t >= secondsAt(p1) + 5)!.p;
     expect(tail(p2) - t0).toBeGreaterThan(1.7);
     expect(snout(p2) - tail(p2)).toBeGreaterThan(snout(p0) - tail(p0) + 1.7);
+    // 从水平转到低头的下沉姿态用十几秒，而不是一下子翻过去
+    const p3 = first(p0, 0.4, (p) => whale(p).pitch > 0.65);
+    expect(secondsAt(p3) - secondsAt(p0)).toBeGreaterThan(11);
   });
 });
 
@@ -115,11 +138,14 @@ describe('descent C/D: steady, heavy sinking', () => {
     for (let i = 1; i < samples.length; i++) {
       const w = whale(samples[i].p);
       const prev = whale(samples[i - 1].p);
-      expect(Math.abs(w.pitch)).toBeLessThan(0.22);
-      expect(Math.abs(w.pitch - prev.pitch) / (samples[i].t - samples[i - 1].t)).toBeLessThan(0.035);
+      expect(w.pitch).toBeGreaterThan(-0.03);
+      expect(w.pitch).toBeLessThan(0.85);
+      // 最快时也只有约 5°/s
+      expect(Math.abs(w.pitch - prev.pitch) / (samples[i].t - samples[i - 1].t)).toBeLessThan(0.09);
       expect(Math.abs(w.flex)).toBeLessThan(0.6);
-      expect(Math.abs(w.nod)).toBeLessThan(0.1);
-      expect(Math.abs(w.fluke)).toBeLessThan(0.25);
+      expect(Math.abs(w.nod)).toBeLessThan(0.18);
+      // 下沉时自下而上的水流把尾叶托向尾柄的延长线
+      expect(Math.abs(w.fluke)).toBeLessThan(0.4);
       for (const f of [w.finN, w.finF]) {
         expect(f).toBeGreaterThan(-0.15);
         expect(f).toBeLessThan(0.5);
@@ -245,31 +271,55 @@ describe('descent: water frame (depth compression)', () => {
 });
 
 describe('descent: a graceful, quiet drift into the deep', () => {
-  /** 脊线在 s 处相对体轴的倾角（弧度，正值向下）：用 WhaleBody 的几何计算 */
-  const tangent = (p: number, s: number) => {
-    const b = new WhaleBody();
-    const w = whale(p);
-    b.compute({ swim: 0, phase: 0, beat: w.beat, beatPh: w.beatPh, mouth: 0, throat: 0, rest: w.rest, flex: w.flex, nod: w.nod, fluke: w.fluke, arc: w.arc, shrink: 0 });
-    const f = b.frame(s, 0, { x: 0, y: 0, a: 0 });
-    return w.pitch + f.a;
-  };
-
-  it('the relaxed body forms an elegant arc: the head droops, the tail flattens out', () => {
-    for (let p = 0.36; p <= 0.46; p += 0.01) {
+  it('sinks head-down in a hanging arc, as in the reference painting', () => {
+    const deg = Math.PI / 180;
+    for (let p = 0.37; p <= 0.44; p += 0.01) {
+      const at = `p=${p.toFixed(2)}`;
       const w = whale(p);
-      expect(w.arc, `p=${p.toFixed(2)}`).toBeGreaterThan(0.8);
-      expect(w.arc, `p=${p.toFixed(2)}`).toBeLessThan(1.5);
-      // 头部比身体中部更向下，尾端接近水平
-      expect(tangent(p, 0.05) - w.pitch, `p=${p.toFixed(2)}`).toBeGreaterThan(0.08);
-      expect(tangent(p, 0.95), `p=${p.toFixed(2)}`).toBeLessThan(w.pitch - 0.05);
-      // 只是“微微”低头
-      expect(w.pitch).toBeGreaterThan(0.08);
-      expect(w.pitch).toBeLessThan(0.22);
+      expect(w.arc, at).toBeGreaterThan(0.9);
+      expect(w.arc, at).toBeLessThan(1.1);
+      // 前半身几乎笔直地斜向下方：胸部约 43°，头部约 46°
+      expect(w.pitch, at).toBeGreaterThan(38 * deg);
+      expect(w.pitch, at).toBeLessThan(47 * deg);
+      expect(tangent(p, 0.1), at).toBeGreaterThan(42 * deg);
+      expect(tangent(p, 0.1), at).toBeLessThan(52 * deg);
+      expect(Math.abs(tangent(p, 0.1) - tangent(p, 0.42)), at).toBeLessThan(8 * deg);
+      // 尾柄顺着长弧垂下，尾端斜向下方约 34°
+      expect(tangent(p, 1), at).toBeLessThan(-26 * deg);
+      expect(tangent(p, 1), at).toBeGreaterThan(-44 * deg);
+      // 背部最高处在体长的六成到八成之间
+      let top = 0;
+      let topY = Infinity;
+      for (let s = 0; s <= 1; s += 0.01) {
+        const y = spineAt(p, s).y;
+        if (y < topY) {
+          topY = y;
+          top = s;
+        }
+      }
+      expect(top, at).toBeGreaterThan(0.6);
+      expect(top, at).toBeLessThan(0.8);
     }
-    // 弧度缓缓形成，接近海床时收拢，交给静卧姿态
-    expect(whale(0.31).arc).toBeLessThan(0.15);
-    expect(whale(CONTACT_P).arc).toBeLessThan(0.4);
+    // 弧度随低头一起缓缓形成，接近海床时舒展开，交给静卧姿态
+    expect(whale(0.32).arc).toBeLessThan(0.05);
+    expect(whale(0.488).arc).toBeLessThan(0.12);
+    expect(whale(CONTACT_P).arc).toBeLessThan(0.05);
     expect(whale(DESCENT_END).arc).toBeLessThan(1e-4);
+    expect(whale(0.488).pitch).toBeLessThan(0.15);
+  });
+
+  it('bending keeps the body length and stays smooth', () => {
+    for (const p of [0.34, 0.36, 0.4, 0.47]) {
+      const b = shape(p);
+      let len = 0;
+      for (let i = 1; i < b.n; i++) len += Math.hypot(b.px[i] - b.px[i - 1], b.py[i] - b.py[i - 1]);
+      expect(Math.abs(len - WHALE_LEN), `p=${p}`).toBeLessThan(0.25);
+      // 任意 1 米内方向变化小于 10°
+      for (let s = 0; s + 1 / WHALE_LEN <= 1; s += 0.01) {
+        const da = Math.abs(tangent(p, s + 1 / WHALE_LEN) - tangent(p, s));
+        expect(da, `p=${p} s=${s.toFixed(2)}`).toBeLessThan(0.175);
+      }
+    }
   });
 
   it('the pectoral fins spread naturally and sway a little, back in the painted pose before touchdown', () => {
@@ -287,12 +337,13 @@ describe('descent: a graceful, quiet drift into the deep', () => {
     expect(whale(CONTACT_P).fin).toBe(0);
   });
 
-  it('drifts forward along its lowered head instead of dropping straight down', () => {
+  it('drifts a little forward along its lowered head, but it is sinking, not swimming down', () => {
     for (let p = 0.37; p <= 0.46; p += 0.01) {
       const f = flow(p);
       expect(f.flowX, `p=${p.toFixed(2)}`).toBeGreaterThan(0.4);
-      // 运动方向偏离竖直方向超过 10°
+      // 运动方向偏离竖直方向 10° ~ 30°
       expect(Math.atan2(f.flowX, f.flowY), `p=${p.toFixed(2)}`).toBeGreaterThan(0.17);
+      expect(Math.atan2(f.flowX, f.flowY), `p=${p.toFixed(2)}`).toBeLessThan(0.52);
     }
   });
 

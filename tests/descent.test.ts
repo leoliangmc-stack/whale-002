@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { secondsAt, WORLD } from '../src/config/stages';
 import { CONTACT_P, DESCENT_END, DESCENT_START, DescentMotion, lowestBelow } from '../src/systems/DescentMotion';
 import { StoryTimeline, Y_REST } from '../src/systems/StoryTimeline';
-import { S_REF, WHALE_LEN } from '../src/entities/WhaleBody';
+import { S_REF, WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
 
 const tl = new StoryTimeline();
 const d = tl.descent;
@@ -101,8 +101,9 @@ describe('descent C/D: steady, heavy sinking', () => {
     }
     expect(flow(0.322).flowY).toBeLessThan(0.17);
     expect(amax).toBeLessThan(0.51);
-    expect(vmax).toBeGreaterThan(2.6);
-    expect(vmax).toBeLessThan(4.3);
+    // 缓慢、安静地漂向深海，而不是坠落：相对水体的下沉速度约 2.3 m/s
+    expect(vmax).toBeGreaterThan(1.9);
+    expect(vmax).toBeLessThan(3);
     // 不会一直加速：深海段的速度不超过稳定段
     expect(flow(0.44).flowY).toBeLessThanOrEqual(flow(0.38).flowY + 1e-6);
   });
@@ -218,7 +219,7 @@ describe('descent: water frame (depth compression)', () => {
     d.seabedShift(0.45, o);
     const gap = WORLD.seabedY + o.y - whale(0.45).y;
     expect(gap).toBeLessThan(69);
-    expect(gap).toBeGreaterThan(26);
+    expect(gap).toBeGreaterThan(15);
   });
 
   it('a creature met on the way is at its nominal depth when the whale passes it', () => {
@@ -240,5 +241,69 @@ describe('descent: water frame (depth compression)', () => {
     expect(b).toEqual(a);
     expect(DescentMotion.covers(0.3)).toBe(true);
     expect(DescentMotion.covers(0.6)).toBe(false);
+  });
+});
+
+describe('descent: a graceful, quiet drift into the deep', () => {
+  /** 脊线在 s 处相对体轴的倾角（弧度，正值向下）：用 WhaleBody 的几何计算 */
+  const tangent = (p: number, s: number) => {
+    const b = new WhaleBody();
+    const w = whale(p);
+    b.compute({ swim: 0, phase: 0, beat: w.beat, beatPh: w.beatPh, mouth: 0, throat: 0, rest: w.rest, flex: w.flex, nod: w.nod, fluke: w.fluke, arc: w.arc, shrink: 0 });
+    const f = b.frame(s, 0, { x: 0, y: 0, a: 0 });
+    return w.pitch + f.a;
+  };
+
+  it('the relaxed body forms an elegant arc: the head droops, the tail flattens out', () => {
+    for (let p = 0.36; p <= 0.46; p += 0.01) {
+      const w = whale(p);
+      expect(w.arc, `p=${p.toFixed(2)}`).toBeGreaterThan(0.8);
+      expect(w.arc, `p=${p.toFixed(2)}`).toBeLessThan(1.5);
+      // 头部比身体中部更向下，尾端接近水平
+      expect(tangent(p, 0.05) - w.pitch, `p=${p.toFixed(2)}`).toBeGreaterThan(0.08);
+      expect(tangent(p, 0.95), `p=${p.toFixed(2)}`).toBeLessThan(w.pitch - 0.05);
+      // 只是“微微”低头
+      expect(w.pitch).toBeGreaterThan(0.08);
+      expect(w.pitch).toBeLessThan(0.22);
+    }
+    // 弧度缓缓形成，接近海床时收拢，交给静卧姿态
+    expect(whale(0.31).arc).toBeLessThan(0.15);
+    expect(whale(CONTACT_P).arc).toBeLessThan(0.4);
+    expect(whale(DESCENT_END).arc).toBeLessThan(1e-4);
+  });
+
+  it('the pectoral fins spread naturally and sway a little, back in the painted pose before touchdown', () => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let p = 0.36; p <= 0.46; p += 2e-4) {
+      const f = whale(p).fin;
+      lo = Math.min(lo, f);
+      hi = Math.max(hi, f);
+    }
+    expect(lo).toBeGreaterThan(0.08);
+    expect(hi).toBeLessThan(0.3);
+    expect(hi - lo).toBeGreaterThan(0.03);
+    expect(Math.abs(whale(DESCENT_START + 1e-4).fin)).toBeLessThan(0.01);
+    expect(whale(CONTACT_P).fin).toBe(0);
+  });
+
+  it('drifts forward along its lowered head instead of dropping straight down', () => {
+    for (let p = 0.37; p <= 0.46; p += 0.01) {
+      const f = flow(p);
+      expect(f.flowX, `p=${p.toFixed(2)}`).toBeGreaterThan(0.4);
+      // 运动方向偏离竖直方向超过 10°
+      expect(Math.atan2(f.flowX, f.flowY), `p=${p.toFixed(2)}`).toBeGreaterThan(0.17);
+    }
+  });
+
+  it('sunlight shafts follow it down, then fade before a thousand metres', () => {
+    const env = (p: number) => ({ ...tl.evaluate(p, 0).env });
+    const rays = (p: number) => Math.exp(-whale(p).y / env(p).rayLen);
+    expect(rays(0.35)).toBeGreaterThan(0.6);
+    expect(rays(0.375)).toBeGreaterThan(0.15);
+    // “一千米以下，阳光再也到达不了”
+    expect(rays(0.405)).toBeLessThan(0.07);
+    expect(env(0.42).glow).toBeGreaterThan(0.9);
+    expect(env(0.42).rim).toBeGreaterThan(0.9);
   });
 });

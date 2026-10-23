@@ -1,7 +1,7 @@
 import type { Camera } from '../core/Camera';
 import { hex, mixRGB, rgba, sampleStops, type RGB, type Shade } from '../core/color';
 import { clamp, fract, hash1, lerp, noise1, smoothstep } from '../core/math';
-import { textures } from '../core/textures';
+import { FAN_SPREAD, textures, type Tex } from '../core/textures';
 import type { RenderCtx } from '../core/types';
 
 /**
@@ -67,7 +67,49 @@ export interface LightingInput {
   vignette: number;
   /** 仰视程度（0~1）：镜头从下方仰拍时，画面上方透出海面的天光 */
   lookUp?: number;
+  /** 光束随深度衰减的长度（米，默认 70）：下沉时光束可以一直追随到更深的水层 */
+  rayLen?: number;
+  /** 自上而下的散射天光（0~1）：开阔的深蓝海水，上方略亮、下方渐深，深海中也不是一片死黑 */
+  glow?: number;
+  /** 深蓝调色（0~1）：下沉时整体压低亮度、偏向清澈的深蓝，避免浅层的青色过曝 */
+  tone?: number;
+  /** 身体的柔和轮廓光与体积明暗（0~1） */
+  rim?: number;
 }
+
+/** 一束光在屏幕上的位置：顶部中心、每像素的水平偏移（扇形散开）、宽度与强度 */
+interface RayBeam {
+  x: number;
+  top: number;
+  slope: number;
+  w0: number;
+  w1: number;
+  len: number;
+  a: number;
+}
+
+/**
+ * 光束分为远、中、近三层：远处宽而淡、移动慢，近处窄而稀疏、视差大；
+ * 每一层都从画面上方的同一个“太阳”方向扇形散开，层层叠叠形成体积感。
+ */
+/**
+ * 深蓝调色（tone = 1 时）：海水、雾色与物体受光的逐通道系数。像电影调色一样压低浅层的青色高光，
+ * 红、绿压得多一些，画面偏向清澈的深蓝而不过曝。直接作用在颜色上，不需要额外的全屏合成。
+ */
+const TONE: RGB = [178 / 255, 204 / 255, 234 / 255];
+/** 自上而下的散射天光：画面上缘、中部与下缘混入的颜色 */
+const GLOW_TOP: RGB = [70, 150, 215];
+const GLOW_MID: RGB = [40, 110, 180];
+const GLOW_BOT: RGB = [2, 10, 24];
+
+/** 背景与光束离屏图层的分辨率（相对 CSS 像素） */
+const RAY_RES = 0.25;
+
+const RAY_LAYERS = [
+  { z: 150, count: 0.7, alpha: 0.07, width: 1.25, sway: 0.05, streak: 0, close: false },
+  { z: 60, count: 1, alpha: 0.11, width: 0.85, sway: 0.07, streak: 0.5, close: false },
+  { z: 18, count: 0.4, alpha: 0.07, width: 1.6, sway: 0.1, streak: 0.35, close: true },
+];
 
 export class LightingManager {
   depth = 60;
@@ -79,6 +121,16 @@ export class LightingManager {
   raysMul = 1;
   vignette = 0.35;
   lookUp = 0;
+  rayLen = 70;
+  glow = 0;
+  tone = 0;
+  rim = 0;
+  /** 本帧画出的光束（供颗粒判断自己是否在光里） */
+  private readonly beams: RayBeam[] = [];
+  private beamCount = 0;
+  /** 背景与光束的离屏图层（1/4 分辨率，见 drawBackground） */
+  private layer: HTMLCanvasElement | null = null;
+  private layerCtx: CanvasRenderingContext2D | null = null;
   readonly water: RGB = [30, 90, 150];
   private readonly tmpA: RGB = [0, 0, 0];
   private readonly tmpB: RGB = [0, 0, 0];
@@ -95,11 +147,17 @@ export class LightingManager {
     this.raysMul = input.rays;
     this.vignette = input.vignette;
     this.lookUp = input.lookUp ?? 0;
+    this.rayLen = input.rayLen ?? 70;
+    this.glow = input.glow ?? 0;
+    this.tone = input.tone ?? 0;
+    this.rim = input.rim ?? 0;
     this.waterAt(this.depth, this.water);
   }
 
   waterAt(y: number, out: RGB): RGB {
-    return sampleStops(WATER_STOPS, y, out);
+    sampleStops(WATER_STOPS, y, out);
+    if (this.tone > 0) for (let i = 0; i < 3; i++) out[i] *= lerp(1, TONE[i], this.tone);
+    return out;
   }
 
   lightAt(y: number): number {
@@ -111,10 +169,32 @@ export class LightingManager {
     return clamp(Math.exp(-Math.max(0, y) / 70));
   }
 
+  /** 光束强度（0~1）：与 sunAt 相同，但衰减长度可以由叙事调节 */
+  rayAt(y: number): number {
+    return clamp(Math.exp(-Math.max(0, y) / this.rayLen));
+  }
+
+  /** 屏幕点 (x, y) 处光束的亮度（0~1 左右）：海洋雪漂进光里时会被照亮 */
+  rayLightAt(x: number, y: number): number {
+    let sum = 0;
+    for (let i = 0; i < this.beamCount; i++) {
+      const b = this.beams[i];
+      const t = (y - b.top) / b.len;
+      if (t < 0 || t > 1) continue;
+      const half = (b.w0 + (b.w1 - b.w0) * t) * 0.5;
+      const u = (x - (b.x + b.slope * (y - b.top))) / half;
+      if (u < -1.6 || u > 1.6) continue;
+      const fade = Math.pow(1 - t, 1.6) * Math.min(1, t * 6);
+      sum += b.a * Math.exp(-u * u * 3.2) * fade;
+    }
+    return sum;
+  }
+
   shadeAt(x: number, y: number, z: number, out: Shade): Shade {
     const cam = this.cam;
     out.light = this.lightAt(y);
     sampleStops(TINT_STOPS, y, out.tint);
+    if (this.tone > 0) for (let i = 0; i < 3; i++) out.tint[i] *= lerp(1, TONE[i], this.tone);
     // 深海局部散射光：主体附近更亮，远处沉入黑暗
     if (this.focusLight > 0.001) {
       const dx = x - this.focusX;
@@ -134,25 +214,63 @@ export class LightingManager {
     return out;
   }
 
-  /** 背景：远处海水的垂直渐变，以及浅层时朝向海面的明亮辉光。 */
+  /**
+   * 背景：远处海水的垂直渐变、浅层时朝向海面的明亮辉光，以及从海面射入的光束。
+   * 它们都非常柔和，所以先画在 1/4 分辨率的离屏图层上，再一次性放大铺满画面：
+   * 层层叠叠的光束不会带来大量的全屏填充。
+   */
   drawBackground(rc: RenderCtx): void {
-    const { ctx, cam, w, h, dpr } = rc;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const { ctx: out, w, h, dpr } = rc;
+    const lw = Math.ceil(w * RAY_RES);
+    const lh = Math.ceil(h * RAY_RES);
+    if (!this.layer) {
+      this.layer = document.createElement('canvas');
+      this.layerCtx = this.layer.getContext('2d');
+    }
+    if (this.layer.width !== lw || this.layer.height !== lh) {
+      this.layer.width = lw;
+      this.layer.height = lh;
+    }
+    const ctx = this.layerCtx!;
+    ctx.setTransform(RAY_RES, 0, 0, RAY_RES, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    this.paintWater(rc, ctx);
+    this.paintRays(rc, ctx);
+    out.setTransform(1, 0, 0, 1, 0, 0);
+    out.globalAlpha = 1;
+    out.globalCompositeOperation = 'source-over';
+    out.imageSmoothingEnabled = true;
+    out.drawImage(this.layer, 0, 0, lw, lh, 0, 0, w * dpr, h * dpr);
+    out.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  /** 海水的渐变与天光（CSS 像素坐标，画在离屏图层上） */
+  private paintWater(rc: RenderCtx, ctx: CanvasRenderingContext2D): void {
+    const { cam, w, h } = rc;
     const far = 400;
     const b = cam.boundsAt(far);
     const top = this.waterAt(b.t, this.tmpA);
     const bot = this.waterAt(b.b, this.tmpB);
-    const g = ctx.createLinearGradient(0, 0, 0, h);
-    g.addColorStop(0, rgba(top));
     const mid: RGB = [0, 0, 0];
     this.waterAt((b.t + b.b) / 2, mid);
+    // 下沉：自上而下的散射天光——开阔、清澈的深蓝海水，上方略亮、下方渐深，深海中也保留一点层次
+    const gl = this.glow;
+    if (gl > 0.01) {
+      const k = gl * (1 - 0.55 * smoothstep(80, 1500, cam.cy));
+      mixRGB(top, GLOW_TOP, 0.22 * k, top);
+      mixRGB(mid, GLOW_MID, 0.05 * k, mid);
+      mixRGB(bot, GLOW_BOT, 0.3 * k, bot);
+    }
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, rgba(top));
     g.addColorStop(0.5, rgba(mid));
     g.addColorStop(1, rgba(bot));
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
 
-    // 朝向海面的天光：越靠近海面越亮
-    const sun = this.sunAt(cam.cy);
+    // 朝向海面的天光：越靠近海面越亮（深蓝调色时压低，不过曝）
+    const sun = this.sunAt(cam.cy) * lerp(1, 0.75, this.tone);
     if (sun > 0.02) {
       const sy = (0 - cam.cy) * cam.scaleAt(far) + cam.py;
       const gy = Math.min(h * 0.2, sy + h * 0.1);
@@ -179,40 +297,64 @@ export class LightingManager {
         ctx.fillRect(0, h * 0.45, w, h * 0.55);
       }
     }
+
   }
 
-  /** 从海面射入的流动光束（加色混合）。 */
-  drawRays(rc: RenderCtx): void {
-    const { ctx, cam, w, h, dpr, time, quality } = rc;
-    const sun = this.sunAt(cam.cy - 10) * this.raysMul;
+  /** 从海面射入的流动光束（加色混合）：远中近三层、从上方扇形散开，柔和而不过曝。 */
+  private paintRays(rc: RenderCtx, ctx: CanvasRenderingContext2D): void {
+    const { cam, w, h, time, quality } = rc;
+    this.beamCount = 0;
+    const sun = this.rayAt(cam.cy - 10) * this.raysMul * lerp(1, 0.8, this.tone);
     if (sun < 0.02) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const n = quality.rays;
-    const zRay = 60;
-    const s = cam.scaleAt(zRay);
-    const surfaceY = cam.py + (0 - cam.cy) * s;
-    const topY = Math.max(-h * 0.1, surfaceY);
-    if (topY > h) return;
-    const len = h * 1.25;
-    const spacing = (w * 1.6) / n;
-    const camShift = -(cam.cx * s * 0.6);
     ctx.globalCompositeOperation = 'lighter';
     const tex = textures().ray;
-    for (let i = 0; i < n; i++) {
-      const seed = hash1(i * 7 + 3);
-      const sway = noise1(time * 0.07 + i * 3.1, 11) * spacing * 0.45;
-      const base = ((i * spacing + camShift + sway) % (w * 1.6) + w * 1.6) % (w * 1.6) - w * 0.3;
-      const width = spacing * (0.35 + seed * 0.7);
-      const flick = 0.55 + 0.45 * (0.5 + 0.5 * noise1(time * 0.13 + seed * 50, 5));
-      ctx.globalAlpha = Math.min(1, 0.16 * sun * flick);
-      // 斜切变换：光束上窄下宽、略微倾斜
-      const shift = w * 0.16;
-      ctx.setTransform((dpr * width) / tex.width, 0, (dpr * shift) / tex.height, (dpr * len) / tex.height, dpr * (base - width / 2), dpr * topY);
-      ctx.drawImage(tex, 0, 0);
+    // 太阳在画面上方偏左的远处：所有光束从这个方向散开
+    const apexX = w * 0.4;
+    const apexY = -h * 2.4;
+    for (let L = 0; L < RAY_LAYERS.length; L++) {
+      const layer = RAY_LAYERS[L];
+      // 近处的一层只在镜头靠近时出现：远景里它会与远处的光束叠成一团过亮的光斑
+      const near = layer.close ? 1 - smoothstep(45, 90, cam.shot.frameH) : 1;
+      if (near < 0.02) continue;
+      const n = Math.max(2, Math.round(quality.rays * layer.count));
+      const s = cam.scaleAt(layer.z);
+      const surfaceY = cam.py + (0 - cam.cy) * s;
+      const topY = Math.max(-h * 0.1, surfaceY);
+      if (topY > h) continue;
+      const len = h * 1.3;
+      const span = w * 1.8;
+      const spacing = span / n;
+      const camShift = -(cam.cx * s * 0.6);
+      for (let i = 0; i < n; i++) {
+        const seed = hash1(i * 7 + 3 + L * 101);
+        const sway = noise1(time * layer.sway + i * 3.1 + L * 17, 11 + L) * spacing * 0.45;
+        const base = ((((i + seed * 0.6) * spacing + camShift + sway) % span) + span) % span - w * 0.4;
+        const width = spacing * (0.35 + seed * 0.7) * layer.width;
+        const flick = 0.55 + 0.45 * (0.5 + 0.5 * noise1(time * 0.13 + seed * 50, 5 + L));
+        const a = Math.min(1, layer.alpha * sun * flick * near);
+        // 扇形：光束的方向指向上方的太阳；越往下越宽
+        const slope = (base - apexX) / (topY - apexY);
+        const w1 = width * FAN_SPREAD;
+        this.drawBeam(ctx, tex, base, topY, slope, w1, len, a);
+        if (this.beamCount < 24) this.beams[this.beamCount++] = { x: base, top: topY, slope, w0: width, w1, len, a };
+        // 光束内部更亮、更细的光丝，形成层次
+        if (layer.streak > 0 && seed > 0.35) {
+          const off = (hash1(i * 13 + L) - 0.5) * width * 0.5;
+          this.drawBeam(ctx, tex, base + off, topY, slope, w1 * 0.24, len * 0.85, a * layer.streak);
+        }
+      }
     }
     ctx.globalAlpha = 1;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /** 一束上窄下宽（宽度比见 rayTexture）、按斜率倾斜的光（画在离屏图层上，坐标为 CSS 像素） */
+  private drawBeam(ctx: CanvasRenderingContext2D, tex: Tex, x: number, top: number, slope: number, w1: number, len: number, a: number): void {
+    if (a < 0.004) return;
+    const k = RAY_RES;
+    ctx.globalAlpha = a;
+    ctx.setTransform((k * w1) / tex.width, 0, (k * slope * len) / tex.height, (k * len) / tex.height, k * (x - w1 / 2), k * top);
+    ctx.drawImage(tex, 0, 0);
   }
 
   /** 暗角、深海局部光的整体调色。 */

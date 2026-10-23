@@ -36,11 +36,23 @@ const BEAT_AMP: Keys = [
 ];
 /** 摆动频率（Hz）：一次比一次慢 */
 const BEAT_FREQ: Keys = [[DESCENT_START, 0.15], [0.292, 0.16], [0.302, 0.14], [0.31, 0.11], [0.32, 0.075]];
-/** 失去浮力后的净下沉加速度（m/s²） */
+/**
+ * 失去浮力后的净下沉加速度（m/s²）。不是坠落，而是缓慢、安静地漂向深海：
+ * 终端下沉速度只有约 2.3 m/s，低头的身体同时顺着体轴向前滑行（见 GLIDE）。
+ */
 const SINK: Keys = [
-  [DESCENT_START, 0], [0.326, 0], [0.332, 0.1], [0.339, 0.51], [0.347, 0.96], [0.365, 1.06], [0.41, 0.96],
-  [0.45, 0.86], [0.475, 0.72], [0.492, 0.58], [DESCENT_END, 0.58],
+  [DESCENT_START, 0], [0.326, 0], [0.332, 0.05], [0.339, 0.26], [0.347, 0.46], [0.365, 0.5], [0.41, 0.47],
+  [0.45, 0.43], [0.475, 0.37], [0.492, 0.3], [DESCENT_END, 0.3],
 ];
+/**
+ * 身体的弧度（米，头尾相对体轴中部下垂的量）：失去肌张力之后，沉重的头部低垂、尾柄顺着长长的弧线放松，
+ * 整个身体呈一道舒展的弓形；接近海床时随下沉放缓而收拢，交给静卧姿态。
+ */
+const ARC: Keys = [
+  [DESCENT_START, 0], [0.305, 0], [0.318, 0.18], [0.332, 0.55], [0.35, 0.88], [0.37, 1], [0.45, 1],
+  [0.472, 0.8], [0.487, 0.42], [CONTACT_P, 0.22], [DESCENT_END, 0],
+];
+const ARC_MAX = 1.15;
 /** 头重力矩（rad/s²）：比浮力变化早约两秒，头部先沉 */
 const HEAD: Keys = [
   [DESCENT_START, 0], [0.322, 0], [0.328, 0.016], [0.336, 0.06], [0.344, 0.084], [0.365, 0.088], [0.41, 0.074],
@@ -65,8 +77,8 @@ const DRAG_Y2 = 0.064;
 const DRAG_Y1 = 0.06;
 /** 尾叶推力系数：幅度 × 频率 → 推力 */
 const THRUST = 4.3;
-/** 低头下沉时沿身体方向的轻微滑行 */
-const GLIDE = 0.05;
+/** 低头下沉时顺着体轴向前滑行：身体像一架没有动力的滑翔机，斜斜地漂向深处 */
+const GLIDE = 0.85;
 /** 俯仰：自然频率约 9 秒、接近临界阻尼，只会有一次很轻的回摆 */
 const PITCH_K = 0.49;
 const PITCH_C = 1.26;
@@ -105,7 +117,7 @@ class Lag2 {
 }
 
 const CHANNELS = [
-  'x', 'y', 'pitch', 'beat', 'beatPh', 'flex', 'nod', 'fluke', 'finN', 'finF',
+  'x', 'y', 'pitch', 'beat', 'beatPh', 'flex', 'nod', 'fluke', 'finN', 'finF', 'arc', 'fin',
   'vx', 'vy', 'lagX', 'lagY', 'hidden', 'waterX', 'waterY',
 ] as const;
 type Channel = (typeof CHANNELS)[number];
@@ -201,6 +213,7 @@ export class DescentMotion {
     const cushT = tr(CUSHION);
     const hideT = tr(HIDE);
     const stirT = tr(STIR);
+    const arcT = tr(ARC);
 
     const T = this.tab;
     const hideInt = new Float64Array(this.n);
@@ -223,6 +236,8 @@ export class DescentMotion {
     const nodL = new Lag2(TAU / 2.2, 0.7);
     const finL = new Lag2(TAU / 2.8, 0.42);
     const finFarL = new Lag2(TAU / 3.4, 0.38);
+    // 身体的弓形：很慢的二阶跟随，形成与收拢都是一个舒缓的过程
+    const arcL = new Lag2(TAU / 6, 0.85);
 
     const steps = Math.ceil(this.duration / SIM_DT);
     const every = Math.round(1 / (SIM_DT * SAMPLE_HZ));
@@ -280,6 +295,9 @@ export class DescentMotion {
           T.fluke[k] = flukeL.x;
           T.finN[k] = finL.x;
           T.finF[k] = finFarL.x;
+          T.arc[k] = arcL.x;
+          // 画中的胸鳍：随水流自然舒展并轻轻摆动；闭眼特写之后才开始（那时胸鳍不在画面里），着陆前回到画中的姿态
+          T.fin[k] = (0.06 + 0.45 * finL.x) * smoothstep(DESCENT_START, 0.3, p) * (1 - smoothstep(0.482, 0.496, p));
           T.vx[k] = vx - uc;
           T.vy[k] = vy - wc;
           T.hidden[k] = hidden;
@@ -338,6 +356,7 @@ export class DescentMotion {
         nodL.step(nodT, SIM_DT);
         finL.step(finT, SIM_DT);
         finFarL.step(finFarT, SIM_DT);
+        arcL.step(ARC_MAX * arcT.at(p) * (1 + 0.08 * noise1(t * 0.09, 27)), SIM_DT);
       }
     }
     return { y: T.y, pitch: T.pitch, hideInt };
@@ -369,7 +388,7 @@ export class DescentMotion {
       T.x[k] = lerp(T.x[k], this.restX, w);
       T.y[k] = lerp(T.y[k], this.restY, w);
       T.pitch[k] = lerp(T.pitch[k], 0, w);
-      for (const c of ['flex', 'nod', 'fluke', 'finN', 'finF', 'vx', 'vy'] as const) T[c][k] *= 1 - w;
+      for (const c of ['flex', 'nod', 'fluke', 'finN', 'finF', 'arc', 'fin', 'vx', 'vy'] as const) T[c][k] *= 1 - w;
     }
 
     // 镜头跟随点：在水体参照系中对鲸鱼位置做带速度前馈的二阶跟随。

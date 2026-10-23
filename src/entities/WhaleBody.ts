@@ -254,6 +254,27 @@ const JAW_MAX = 1.3;
 const THROAT_MAX = 1.35;
 const THROAT_END = 0.44;
 
+/**
+ * 拍尾的不对称：尾叶上拍（鲸类主要的推进动作）比回程快一些，显得有力而不机械。
+ * 输入为匀速前进的相位，输出为身体波动使用的相位（单调，平均速度不变）。
+ */
+export function strokeWarp(ph: number): number {
+  return ph + 0.2 * Math.sin(ph - 1.38);
+}
+
+/**
+ * 弓形的形状：以体轴中部（参考点）为顶，向头尾两端平滑下垂，参考点处位移与斜率都为零。
+ * 尾端下垂 1，头部较短、较重，下垂 0.75；曲率沿身体连续变化，没有折角。
+ */
+export function archShape(s: number): number {
+  if (s >= S_REF) {
+    const t = (s - S_REF) / (1 - S_REF);
+    return t * t * (1.15 - 0.15 * t);
+  }
+  const t = (S_REF - s) / S_REF;
+  return 0.75 * t * t;
+}
+
 export interface WhaleShape {
   /** 尾鳍摆动幅度 0~1（氛围时钟驱动的主动游动） */
   swim: number;
@@ -271,6 +292,8 @@ export interface WhaleShape {
   nod: number;
   /** 尾叶被动偏转（弧度，正值尾叶上翘） */
   fluke: number;
+  /** 身体的弓形（米，头尾相对体轴中部下垂的量）：下沉时失去肌张力后的舒展弧线 */
+  arc: number;
   /** 软组织收缩（分解）0~1 */
   shrink: number;
 }
@@ -361,6 +384,7 @@ export class WhaleBody {
       const h = 1 - smoothstep(0, 0.38, s);
       dy += sh.nod * h * h;
     }
+    if (sh.arc !== 0) dy += sh.arc * archShape(s);
     return dy;
   }
 

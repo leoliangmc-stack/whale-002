@@ -140,7 +140,7 @@ export class UI {
       <h1 id="intro-title">鲸落</h1>
       <div class="sub">深海之境</div>
       <div class="en">Whale Fall · The Living Abyss</div>
-      <p class="tagline">跟随一头座头鲸，从阳光照耀的海洋沉入幽暗深海。<br>一头鲸鱼的生命结束，可以成为无数生命的新起点。</p>
+      <p class="tagline">跟随一头蓝鲸，从阳光照耀的海洋沉入幽暗深海。<br>一头鲸鱼的生命结束，可以成为无数生命的新起点。</p>
       <div class="actions"></div>
       <div class="how">${touch ? '手指<b>向上滑动</b>推进故事，向下滑动回看' : '滚动<b>鼠标滚轮</b>推进或回看故事，空格键暂停'}<br>故事也会缓缓自动播放，随时可以暂停观察</div>
       <div class="opts"></div>`;

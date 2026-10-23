@@ -220,53 +220,64 @@ export class AudioManager {
     }
   }
 
-  /** 座头鲸的低沉滑音（带颤音与混响）。 */
+  /**
+   * 蓝鲸的叫声：先是一段低沉、缓慢脉动的“A 叫声”，再接一段长而平稳、缓缓下滑的“B 叫声”。
+   * 真实的蓝鲸叫声在 10~40 赫兹，大多低于人耳的听阈；这里整体移高约两个八度，保留它的节奏与形状。
+   * falling 为告别时的叫声：只有更长、更低、更弱的下滑。
+   */
   whaleCall(gain: number, pitch: number, distant: boolean, falling = false): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const ov = this.overrides.get('whaleCall');
     if (ov) return this.playBuffer(ov, gain);
     const t = ctx.currentTime + 0.05;
-    const dur = falling ? 5.5 : 3.6;
+    const f0 = 72 * pitch;
+    const aDur = falling ? 0 : 2.6;
+    const bDur = falling ? 7 : 5.2;
+    const dur = aDur + bDur;
     const o = ctx.createOscillator();
     o.type = 'sawtooth';
-    const f0 = 140 * pitch;
-    if (falling) {
-      o.frequency.setValueAtTime(f0 * 1.6, t);
-      o.frequency.exponentialRampToValueAtTime(f0 * 1.9, t + 1.2);
-      o.frequency.exponentialRampToValueAtTime(f0 * 0.62, t + dur);
-    } else {
-      o.frequency.setValueAtTime(f0, t);
-      o.frequency.exponentialRampToValueAtTime(f0 * 2.4, t + dur * 0.45);
-      o.frequency.exponentialRampToValueAtTime(f0 * 1.5, t + dur);
-    }
-    const vib = ctx.createOscillator();
-    vib.frequency.value = 5.2;
-    const vg = ctx.createGain();
-    vg.gain.value = f0 * 0.02;
-    vib.connect(vg).connect(o.frequency);
-    // 共振峰滤波让锯齿波变得柔和、像“歌声”
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = 420 * pitch;
-    bp.Q.value = 2.2;
+    // A：略高、几乎不变；B：低一个小三度，缓慢下滑
+    if (aDur > 0) {
+      o.frequency.setValueAtTime(f0 * 1.22, t);
+      o.frequency.linearRampToValueAtTime(f0 * 1.19, t + aDur - 0.3);
+      o.frequency.exponentialRampToValueAtTime(f0, t + aDur + 0.3);
+    } else o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f0 * 0.88, t + dur);
+    // 低通让锯齿波只剩几条泛音：浑厚、像远处的雾笛
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = distant ? 700 : 1400;
+    lp.frequency.value = (distant ? 260 : 420) * pitch;
+    lp.Q.value = 0.9;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.22 * gain, t + 0.6);
-    g.gain.setValueAtTime(0.22 * gain, t + dur - 1.2);
+    g.gain.exponentialRampToValueAtTime(0.3 * gain, t + 0.9);
+    g.gain.setValueAtTime(0.3 * gain, t + dur - 1.6);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(bp).connect(lp).connect(g);
+    // A 叫声的脉动：约每秒两次的起伏
+    const pulse = ctx.createGain();
+    pulse.gain.value = 1;
+    let lfo: OscillatorNode | null = null;
+    if (aDur > 0) {
+      lfo = ctx.createOscillator();
+      lfo.frequency.value = 2.2;
+      const depth = ctx.createGain();
+      depth.gain.setValueAtTime(0.45, t);
+      depth.gain.setValueAtTime(0.45, t + aDur - 0.4);
+      depth.gain.linearRampToValueAtTime(0, t + aDur + 0.2);
+      lfo.connect(depth).connect(pulse.gain);
+    }
+    o.connect(lp).connect(pulse).connect(g);
     const dry = ctx.createGain();
     dry.gain.value = distant ? 0.25 : 0.6;
     g.connect(dry).connect(this.master);
     g.connect(this.reverb);
     o.start(t);
-    vib.start(t);
     o.stop(t + dur + 0.1);
-    vib.stop(t + dur + 0.1);
+    if (lfo) {
+      lfo.start(t);
+      lfo.stop(t + dur + 0.1);
+    }
   }
 
   /** 喷气：短促上升的“噗——”与随后的水雾嘶声。 */

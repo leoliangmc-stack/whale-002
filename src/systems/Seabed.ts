@@ -132,12 +132,12 @@ export class Seabed {
     }
     // 前景的几株海鳃 / 海绵，形成视差遮挡
     const fg: Array<[number, number, FeatureKind]> = [
-      [X - 9, -6, 'seapen'],
-      [X + 11, -5, 'sponge'],
-      [X - 22, -7.5, 'crinoid'],
-      [X + 19, -9, 'seapen'],
-      [X - 3, -10, 'sponge'],
-      [X + 33, -6, 'crinoid'],
+      [X - 15.4, -10.3, 'seapen'],
+      [X + 18.9, -8.6, 'sponge'],
+      [X - 37.7, -12.9, 'crinoid'],
+      [X + 32.6, -15.4, 'seapen'],
+      [X - 5.1, -17.1, 'sponge'],
+      [X + 56.6, -10.3, 'crinoid'],
     ];
     fg.forEach(([x, z, kind], i) => this.features.push({ kind, x, z, s: 1.6, seed: 5000 + i }));
     this.features.sort((a, b) => b.z - a.z);
@@ -213,7 +213,7 @@ export class Seabed {
   /** 海床是否出现在画面中 */
   visible(rc: RenderCtx): boolean {
     const b = rc.cam.boundsAt(0);
-    return b.b > this.y - 60 && rc.cam.cy < this.y + 1;
+    return b.b > this.y - 103 && rc.cam.cy < this.y + 1;
   }
 
   /** 地面在深度 z 处的屏幕 y */
@@ -270,7 +270,7 @@ export class Seabed {
     for (const z of zs) {
       const yy = this.groundY(rc, z);
       const t = clamp((yy - horizon) / Math.max(1, h - horizon));
-      rc.light.shadeAt(this.focusX + 60, this.y, z, sh);
+      rc.light.shadeAt(this.focusX + 103, this.y, z, sh);
       this.haze(sh);
       const base = mixRGB(C.sandFar, C.sand, smoothstep(160, 10, z), this.tmp);
       g.addColorStop(t, rgba(shadeRGB(base, sh, this.tmp)));
@@ -280,7 +280,7 @@ export class Seabed {
 
     // 主体周围被局部光照亮的地面
     if (rc.light.focusLight > 0.01 && cam.project(rc.light.focusX, this.y, 0, this.P)) {
-      const R = 26 * this.P.s;
+      const R = 44.6 * this.P.s;
       const yy = this.P.y;
       ctx.save();
       ctx.translate(this.P.x, yy);
@@ -311,14 +311,14 @@ export class Seabed {
   private drawHalo(rc: RenderCtx): void {
     if (this.enrich < 0.01) return;
     const { ctx, cam, dpr } = rc;
-    if (!cam.project(WORLD.restX - 1, this.y, 0, this.P)) return;
+    if (!cam.project(WORLD.restX - 1.71, this.y, 0, this.P)) return;
     const sh = this.sh;
     rc.light.shadeAt(WORLD.restX, this.y, 0, sh);
     this.haze(sh);
-    const yNear = this.groundY(rc, -5);
-    const yFar = this.groundY(rc, 6);
+    const yNear = this.groundY(rc, -8.6);
+    const yFar = this.groundY(rc, 10.3);
     const ry = Math.max(2, (yNear - yFar) / 2);
-    const rx = 12 * this.P.s;
+    const rx = 20.6 * this.P.s;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.save();
     ctx.translate(this.P.x, (yNear + yFar) / 2);
@@ -340,10 +340,10 @@ export class Seabed {
         if (k <= 0) continue;
         const ang = hash1(i * 7 + 2) * TAU;
         const d = Math.sqrt(hash1(i * 7 + 3));
-        const x = WORLD.restX - 1 + Math.cos(ang) * d * 10;
-        const z = Math.sin(ang) * d * 5;
+        const x = WORLD.restX - 1.71 + Math.cos(ang) * d * 17.1;
+        const z = Math.sin(ang) * d * 8.6;
         if (!cam.project(x, this.y, z, this.P)) continue;
-        const s = (0.08 + hash1(i * 7 + 4) * 0.22) * this.P.s * k;
+        const s = (0.14 + hash1(i * 7 + 4) * 0.38) * this.P.s * k;
         ctx.globalAlpha = 0.3 * k;
         ctx.beginPath();
         ctx.ellipse(this.P.x, this.P.y, s * 1.6, s * 0.3, 0, 0, TAU);

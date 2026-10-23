@@ -1,9 +1,10 @@
-import { hex, makeShade, mixRGB, rgba, shadeRGB, type RGB, type Shade } from '../core/color';
-import { clamp, hash1, lerp, noise1, rng, smoothstep, TAU } from '../core/math';
+import { hex, makeShade, rgba, shadeRGB, type RGB, type Shade } from '../core/color';
+import { clamp, hash1, lerp, noise1, rng, sampleProfile, smoothstep, TAU } from '../core/math';
 import { textures } from '../core/textures';
 import type { RenderCtx } from '../core/types';
 import { WORLD } from '../config/stages';
-import { S_BLOW, S_EYE, S_FIN, S_GAPE, WhaleBody, type WhaleShape } from './WhaleBody';
+import { ART_EYE_OFF, ART_H, ART_W, AXIS_ANGLE, AXIS_PX, axisPx, EYE_ART, mipLevel, sAtPx, whaleArt, type Mipped } from './WhaleArt';
+import { LOWER, LUNGE_LO, LUNGE_UP, S_BLOW, S_EYE, S_FIN, UPPER, WHALE_LEN, WhaleBody, type WhaleShape } from './WhaleBody';
 import { WhaleSkeleton } from './WhaleSkeleton';
 
 /** 由叙事时间线求得的鲸鱼状态。 */
@@ -40,16 +41,17 @@ export interface WhaleState {
   nod: number;
   /** 尾叶被动偏转（弧度） */
   fluke: number;
-  /** 近侧 / 远侧胸鳍随水流的被动摆动（弧度，正值向后上方抬起） */
+  /** 近侧 / 远侧胸鳍随水流的被动摆动（弧度，正值向后上方抬起）。画中的胸鳍贴着身体，不单独摆动 */
   finN: number;
   finF: number;
-  /** 鲸鱼下方海床的世界 y（下沉途中海床属于水体参照系，会有偏移；用于鳍的海床约束与接触阴影） */
+  /** 鲸鱼下方海床的世界 y（下沉途中海床属于水体参照系，会有偏移；用于尾叶的海床约束与接触阴影） */
   seabed: number;
 }
 
 /**
- * 胸鳍姿态（鲸鱼局部坐标）：a 为根部方向，bend 为远端相对根部的弯折（正值使远端更平），
- * len / wid 为侧视中的长度与宽度比例（平放在海床上的鳍因透视而略短、略窄）。
+ * 胸鳍姿态（鲸鱼局部坐标）：a 为根部指向鳍尖的方向，bend 为远端相对根部的弯折，
+ * len / wid 为侧视中的长度与宽度比例。蓝鲸的胸鳍短而窄，画中贴着身体斜向后下方，
+ * 骨骼里的胸鳍骨按同一个姿态摆放。
  */
 export interface FinPose {
   a: number;
@@ -58,14 +60,19 @@ export interface FinPose {
   wid: number;
 }
 
-/** 静卧：近侧胸鳍向外展开，根部较陡、远端顺着海床放平 */
-const REST_FIN: FinPose = { a: Math.PI - 0.38, bend: 0.24, len: 0.93, wid: 0.7 };
-/** 静卧：远侧胸鳍沿身体向后落在另一侧的海床上，大部分被躯干遮住 */
-const REST_FIN_FAR: FinPose = { a: Math.PI - 0.1, bend: 0.06, len: 0.84, wid: 0.58 };
-const FIN_LEN = 4.3;
-/** 鳍尖可以低于身体着地线的距离（米）：近侧的鳍落在镜头一侧的海床上，侧视中略低；远侧的落在身体后方，侧视中略高 */
-const FIN_GROUND_NEAR = 0.5;
-const FIN_GROUND_FAR = -0.22;
+/** 画中胸鳍：根部在体轴下方约 0.94 米，长约 3.2 米（体长的 13%），斜向后下方约 30° */
+export const FIN_LEN = 3.22;
+export const FIN_ROOT_V = -0.39;
+const PAINTED_FIN: FinPose = { a: Math.PI - 0.523, bend: 0, len: 1, wid: 1 };
+
+/** 画中尾叶下叶的尖端（画框像素）：静卧时它不会插进海床 */
+const FLUKE_TIP = { x: 40, y: 472 };
+/** 尾叶的另外两个代表点（用于海床上的阴影） */
+const FLUKE_MID = { x: 150, y: 400 };
+const FLUKE_UP = { x: 170, y: 255 };
+
+/** 沿体轴切成的条带数：每条约 0.3 米，弯曲时看不出折线 */
+const SLICES = 84;
 
 export function makeWhaleState(): WhaleState {
   return {
@@ -96,42 +103,39 @@ export function makeWhaleState(): WhaleState {
   };
 }
 
-const C = {
-  dorsal: hex('#29313b'),
-  flank: hex('#414b56'),
-  lowFlank: hex('#69727b'),
-  belly: hex('#bfc6cb'),
-  bellyLight: hex('#e1e5e7'),
-  pleat: hex('#353d46'),
-  interior: hex('#1b1f27'),
-  interiorDeep: hex('#0f1117'),
-  baleen: hex('#b6a88b'),
-  baleenDark: hex('#6f6656'),
-  tongue: hex('#857680'),
-  fin: hex('#d2d8dc'),
-  finEdge: hex('#7d8790'),
-  finMottle: hex('#4f5963'),
-  eyeBall: hex('#120e0d'),
-  iris: hex('#3d2b20'),
-  lid: hex('#323b45'),
-  socket: hex('#1f252c'),
-  tubercle: hex('#3b444f'),
-  barnacle: hex('#c8c2b2'),
-  pale: hex('#9aa2a8'),
-  paleBelly: hex('#c3c7c9'),
-  rim: hex('#cfe9f7'),
-};
+/** 分解时软组织褪去的颜色 */
+const PALE = hex('#a7aeb2');
+/** 身体画与骨骼画的平均颜色（用于光照的色偏近似，见 applyLight） */
+const SKIN_AVG: RGB = [154, 171, 175];
+const BONE_AVG: RGB = [194, 187, 173];
+
+// ------------------------------------------------------------------ 张嘴（滤食）
+// 须鲸冲刺滤食时，上下颌之间的张角接近 90°（Pyenson et al. 2012；Goldbogen 2010）。
+// 张嘴的那张画只张开了约 30°：先从游动的画过渡到它，再把下颌连同喉囊绕颌关节继续向下转 60°。
+// 喉囊像扇子一样展开、向外鼓起；上下颌之间的缝隙保持透明，看到的是后面的海水。
+
+/** 颌关节：画中上下颌缝隙的顶点（s 与离体轴的距离，米，正值向上） */
+const JAW_S = 0.178;
+const JAW_OFF = 0.25;
+/** 下颌上缘的方向（从颌关节指向下颌尖；头部坐标，+x 指向吻端，+y 向下） */
+const JAW_A = Math.atan2(1.44 + JAW_OFF, (JAW_S - 0.01) * WHALE_LEN);
+/** 吻部下缘的方向 */
+const ROSTRUM_A = Math.atan2(-(0.78 - JAW_OFF), (JAW_S - 0.01) * WHALE_LEN);
+/** 喉囊后缘的方向：颌关节到胸鳍前方的腹部（s = 0.42），之后的身体不动 */
+const POUCH_A = Math.atan2(2.39 + JAW_OFF, (JAW_S - 0.42) * WHALE_LEN);
+/** 下颌骨所在的一窄条：整体刚性转动 */
+const JAW_BONE = 0.14;
+/** 扇形从下颌上缘之上一点开始（下颌上缘并不是直线，略有拱起；这里是透明的缝隙） */
+const JAW_MARGIN = 0.12;
+/** 画中张角之外再转的角度 */
+const JAW_EXTRA = Math.PI / 3;
+/** 喉囊展开时向外鼓起的幅度（半径的比例） */
+const POUCH_SWELL = 0.5;
+/** 扇形分块数 */
+const FAN = 40;
 
 /** 被挤起的软泥边缘（被局部散射光照亮的细颗粒沉积物） */
 const BERM = hex('#9a9484');
-
-interface Mottle {
-  s: number;
-  v: number;
-  r: number;
-  dark: boolean;
-  rot: number;
-}
 
 interface Hole {
   s: number;
@@ -139,6 +143,29 @@ interface Hole {
   r: number;
   th: number;
   seed: number;
+}
+
+/**
+ * 一条画面条带在鲸鱼局部坐标中的摆放：中心、朝向（指向吻端），以及体轴上下两半各自的竖向缩放
+ * （分解时软组织向骨骼收缩；滤食时游动的画向张嘴的轮廓拉伸，张嘴的画从游动的轮廓展开）。
+ */
+interface Slice {
+  x0: number;
+  x1: number;
+  s: number;
+  px: number;
+  py: number;
+  a: number;
+  /** 游动的画：上半 / 下半的竖向缩放 */
+  ku: number;
+  kl: number;
+  /** 张嘴的画：上半 / 下半的竖向缩放 */
+  kuL: number;
+  klL: number;
+  /** 尾叶条带的透明度（尾叶里没有骨骼，随软组织一起消失） */
+  alpha: number;
+  /** 张嘴时，游动的画在吻端尖处提前淡出（那里被拉伸得最厉害） */
+  tipFade: number;
 }
 
 /** 鲸鱼游动动画控制：把叙事状态转换为具体的身体几何与绘制。 */
@@ -149,30 +176,32 @@ export class Whale {
   phase = 0;
   private readonly shape: WhaleShape = { swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest: 0, flex: 0, nod: 0, fluke: 0, shrink: 0 };
   private readonly sh: Shade = makeShade();
-  private readonly mottles: Mottle[] = [];
   private readonly holes: Hole[] = [];
-  private readonly col: Record<keyof typeof C, string> = {} as Record<keyof typeof C, string>;
   private readonly tmp: RGB = [0, 0, 0];
-  private readonly tmp2: RGB = [0, 0, 0];
   private layer: HTMLCanvasElement | null = null;
   private layerCtx: CanvasRenderingContext2D | null = null;
+  private aux: HTMLCanvasElement | null = null;
+  private auxCtx: CanvasRenderingContext2D | null = null;
+  private eyeLayer: HTMLCanvasElement | null = null;
+  private eyeCtx: CanvasRenderingContext2D | null = null;
   private readonly p = { x: 0, y: 0 };
   private readonly q = { x: 0, y: 0 };
   private readonly f = { x: 0, y: 0, a: 0 };
   private readonly P3 = { x: 0, y: 0, s: 0 };
   private readonly P4 = { x: 0, y: 0, s: 0 };
   private readonly sh2: Shade = makeShade();
-  /** 尾叶两侧叶片在侧视中的展开（尾叶坐标的 y 系数）：近侧 / 远侧 */
-  private kNear = 0.52;
-  private kFar = -0.4;
-  private readonly finCx = new Float32Array(37);
-  private readonly finCy = new Float32Array(37);
-  private readonly finTh = new Float32Array(37);
-  /** 局部绘制变换在屏幕上的包围盒（像素，用于分解图层裁剪） */
+  private readonly slices: Slice[] = [];
+  /** 尾叶相对尾柄的偏转（弧度，含静卧时的海床约束） */
+  private flukeTurn = 0;
+  /** 游动 → 张嘴两张画的过渡（0~1） */
+  private gape = 0;
+  /** 下颌在画中张角之外继续下转的程度（0~1） */
+  private jaw = 0;
+  /** 局部绘制变换在屏幕上的包围盒（像素，用于离屏图层裁剪） */
   private bbox = { x0: 0, y0: 0, x1: 0, y1: 0 };
-  readonly finPose: FinPose = { a: Math.PI - 0.62, bend: 0, len: 1, wid: 1 };
-  readonly finFarPose: FinPose = { a: Math.PI - 0.48, bend: 0, len: 0.92, wid: 0.85 };
-  /** 与海床的接触（每帧由 prepareContact 计算，局部坐标） */
+  readonly finPose: FinPose = { ...PAINTED_FIN };
+  readonly finFarPose: FinPose = { ...PAINTED_FIN };
+  /** 与海床的接触（每帧由 updateContact 计算，局部坐标） */
   private readonly contact = {
     /** 每个脊线采样处，腹侧（按未分解的身体）离海床的距离，负值为压入沉积物的深度 */
     gap: new Float32Array(64),
@@ -189,25 +218,24 @@ export class Whale {
 
   constructor(seed = 1) {
     const r = rng(seed * 97 + 13);
-    for (let i = 0; i < 40; i++) {
-      const belly = i < 30;
-      this.mottles.push({
-        s: 0.1 + r() * 0.62,
-        v: belly ? -0.45 - r() * 0.5 : -0.3 + r() * 0.55,
-        r: 0.05 + r() * r() * 0.2,
-        dark: belly ? r() > 0.2 : r() > 0.85,
-        rot: r() * Math.PI,
-      });
-    }
     for (let i = 0; i < 64; i++) {
       this.holes.push({
         s: 0.05 + r() * 0.9,
         v: -0.85 + r() * 1.7,
-        r: 0.35 + r() * 0.85,
+        r: 0.6 + r() * 1.45,
         th: 0.18 + r() * 0.8,
         seed: i,
       });
     }
+    // 条带：在画中等宽，覆盖整幅画（吻端之前的一点空白到尾叶末端）
+    const w = ART_W / SLICES;
+    for (let j = 0; j < SLICES; j++) {
+      const x0 = j * w;
+      const x1 = x0 + w;
+      this.slices.push({ x0, x1, s: sAtPx((x0 + x1) / 2), px: 0, py: 0, a: 0, ku: 1, kl: 1, kuL: 1, klL: 1, alpha: 1, tipFade: 1 });
+    }
+    // 从吻端排到尾叶，便于在缺刻之后沿着尾叶逐段累积位置
+    this.slices.sort((a, b) => a.s - b.s);
     this.skeleton = new WhaleSkeleton(seed);
   }
 
@@ -217,8 +245,8 @@ export class Whale {
    */
   update(dt: number, effort: number): void {
     const st = this.state;
-    // 大型动物的节奏：尾叶约 4~6 秒拍一次，用户快速滚动时也只略微加快
-    const freq = 0.17 + 0.08 * clamp(effort);
+    // 蓝鲸是拍尾最慢的须鲸：巡游时约 8 秒拍一次（Gough et al. 2019），用户快速滚动时也只略微加快
+    const freq = 0.12 + 0.07 * clamp(effort);
     this.phase += dt * TAU * freq * (0.35 + 0.65 * st.swim);
   }
 
@@ -248,78 +276,130 @@ export class Whale {
     sh.fluke = st.fluke;
     sh.shrink = 1 - smoothstep(0.0, 1, st.tissue);
     this.body.compute(sh);
-    this.finFor(st.finN, false, this.finPose);
-    this.finFor(st.finF, true, this.finFarPose);
     this.flukeFor();
+    this.placeSlices();
+    if (st.tissue < 0.999) this.skeleton.prepare(this.body, st, st.rest > 0.5 ? (lx) => this.groundLocal(lx) : null);
   }
 
   /**
-   * 尾叶：游动与下沉时两片叶片上下展开；静卧时尾叶松弛地斜靠在海床上——
-   * 远侧叶片贴着海床，近侧叶片略微翘起，整体比游动时平得多，也不再对称。
+   * 尾叶相对尾柄的偏转：游动时随拍尾超前摆动，下沉时被水流托起（WhaleBody.flukeAngle）；
+   * 接近海床时，画中斜向后下方的尾叶下叶被海床托住——偏转以软约束（softplus）平滑地受限，
+   * 叶尖可以略微陷进软泥，但不会插进海床。
    */
   private flukeFor(): void {
-    const st = this.state;
     const b = this.body;
-    const k = smoothstep(0.3, 0.95, st.rest);
-    this.kNear = lerp(0.52, 0.27, k);
-    this.kFar = lerp(-0.4, -0.13, k);
-    // 海床约束：两片叶片的尖端都不低于海床（侧视中远侧叶片在身体后方，应略高于着地线）
     const n = b.n;
-    const c = Math.cos(b.flukeAngle);
-    const s = Math.sin(b.flukeAngle);
-    for (const far of [false, true]) {
-      const ky = far ? this.kFar : this.kNear;
-      const tx = b.px[n - 1] + 1.75 * c - 2.35 * ky * s;
-      const ty = b.py[n - 1] + 1.75 * s + 2.35 * ky * c;
-      const limit = this.groundLocal(tx) + (far ? -0.08 : 0.42);
-      if (Math.abs(c) < 0.2) continue;
-      // ty 关于 ky 是线性的：解出恰好落在海床上的展开量，再以软约束（softplus）平滑地限制，
-      // 叶片接近海床时就开始被托平，而不是碰到后突然折起
-      const B = 2.35 * c;
-      const kLim = ky + (limit - ty) / B;
-      const w = 0.04;
-      const x = (B < 0 ? kLim - ky : ky - kLim) / w;
+    let turn = b.flukeAngle - b.tailAngle;
+    // 尾叶下叶尖端相对缺刻的位置（局部坐标，未偏转时）
+    const mpp = WHALE_LEN / AXIS_PX;
+    const notch = axisPx(1, this.p);
+    const vx = (FLUKE_TIP.x - notch.x) * mpp;
+    const vy = (FLUKE_TIP.y - notch.y) * mpp;
+    b.frame(1, 0, this.f);
+    const nx = b.px[n - 1];
+    const ny = b.py[n - 1];
+    const tip = (t: number) => {
+      const a = this.f.a + t - AXIS_ANGLE;
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      return { x: nx + vx * c - vy * s, y: ny + vx * s + vy * c };
+    };
+    const k = smoothstep(0.2, 0.9, this.state.rest);
+    const t0 = tip(turn);
+    const limit = this.groundLocal(t0.x) + 0.28;
+    // 叶尖高度对偏转的导数（数值），沿着让叶尖抬起的方向推开
+    const e = 0.01;
+    const dy = (tip(turn + e).y - t0.y) / e;
+    if (Math.abs(dy) > 0.05) {
+      const w = 0.06;
+      const x = (t0.y - limit) / Math.abs(dy) / w;
       const push = w * (x > 20 ? x : Math.log1p(Math.exp(x)));
-      const k2 = B < 0 ? ky + push : ky - push;
-      if (far) this.kFar = k2;
-      else this.kNear = k2;
+      turn -= Math.sign(dy) * push;
     }
+    // 静卧：尾叶在关节处松弛地多放平一点
+    this.flukeTurn = turn - 0.12 * k;
   }
 
-  /**
-   * 胸鳍姿态：游动时向后下方，滤食时外展；失去生命后保持自然展开，只随水流被动摆动
-   * （passive 由下沉动作层给出）。静卧时两侧不对称：近侧向外展开、斜放在沉积物上，
-   * 远侧沿身体向后落在另一侧的海床上。任何时候鳍尖都不会穿过海床——接近海床时，
-   * 先触到海床的鳍被缓缓推向后方。
-   */
-  private finFor(passive: number, far: boolean, out: FinPose): void {
+  /** 每条画面条带的摆放：缺刻之前沿着脊线，之后沿着偏转的尾叶逐段累积。 */
+  private placeSlices(): void {
+    const b = this.body;
     const st = this.state;
-    const swimFin = Math.PI - 0.62 + 0.12 * Math.sin(this.phase * 0.5 + 0.8) * st.swim;
-    const feedFin = Math.PI - 1.15;
-    const limpFin = Math.PI - 0.8 + passive;
-    let a = lerp(limpFin, swimFin, st.life);
-    a = lerp(a, feedFin, smoothstep(0.1, 0.8, st.mouth) * st.life);
-    if (far) a += 0.14;
-    const rp = far ? REST_FIN_FAR : REST_FIN;
-    const k = smoothstep(0.15, 0.8, st.rest);
-    // 最后一点惯性：鳍落定时极轻地再压下一点，随即回到静止
-    const settle = (far ? 0.02 : 0.035) * Math.sin(Math.PI * smoothstep(0.55, 1, st.rest));
-    out.a = lerp(a, rp.a, k) - settle;
-    out.bend = rp.bend * k;
-    out.len = lerp(far ? 0.92 : 1, rp.len, k);
-    out.wid = lerp(far ? 0.85 : 1, rp.wid, k);
-
-    // 海床约束（局部坐标，按鳍的平均方向估算鳍尖）
-    const root = this.body.point(S_FIN, far ? -0.32 : -0.5, this.p);
-    const L = FIN_LEN * out.len;
-    const aEff = out.a + out.bend * 0.5;
-    const limit = this.groundLocal(root.x + L * Math.cos(aEff)) + (far ? FIN_GROUND_FAR : FIN_GROUND_NEAR);
-    const need = (limit - root.y) / L;
-    // 软约束（softplus）：鳍尖接近海床时就开始被缓缓推开，而不是碰到后突然转向；始终不低于海床
-    const aMin = Math.PI - Math.asin(clamp(need, -1, 1));
-    const w = 0.07;
-    const x = (aMin - aEff) / w;
-    out.a += w * (x > 20 ? x : Math.log1p(Math.exp(x)));
+    const L = WHALE_LEN;
+    const f = this.f;
+    const shrink = this.shape.shrink;
+    const fu = 1 - 0.42 * shrink;
+    const fl = 1 - 0.3 * shrink;
+    // 张嘴：先过渡到张嘴的画，再继续下转下颌；闭嘴后喉囊仍鼓着，随着海水被挤出才慢慢收回
+    const m = smoothstep(0.02, 0.4, st.mouth);
+    const pouch = Math.max(m, 0.85 * clamp(st.throat));
+    this.gape = m;
+    this.jaw = smoothstep(0.4, 1, st.mouth);
+    const turn = this.flukeTurn;
+    const ramp = (s: number) => smoothstep(0.965, 1.04, s);
+    const flukeA = smoothstep(0.12, 0.55, st.tissue);
+    let lastS = 0;
+    let lastX = 0;
+    let lastY = 0;
+    let lastA = 0;
+    for (const sl of this.slices) {
+      const s = sl.s;
+      if (s <= 1) {
+        b.frame(Math.max(0, s), 0, f);
+        sl.a = f.a + turn * ramp(s);
+        sl.px = f.x;
+        sl.py = f.y;
+        if (s < 0) {
+          sl.px += -s * L * Math.cos(f.a);
+          sl.py += -s * L * Math.sin(f.a);
+        }
+        if (s <= 1) {
+          lastS = s;
+          lastX = sl.px;
+          lastY = sl.py;
+          lastA = sl.a;
+        }
+      } else {
+        if (lastS < 1) {
+          // 从缺刻处接着排：先到缺刻
+          b.frame(1, 0, f);
+          lastX = f.x;
+          lastY = f.y;
+          lastA = f.a + turn * ramp(1);
+          lastS = 1;
+        }
+        const a = f.a + turn * ramp(s);
+        const am = (a + lastA) / 2;
+        const d = (s - lastS) * L;
+        sl.px = lastX - d * Math.cos(am);
+        sl.py = lastY - d * Math.sin(am);
+        sl.a = a;
+        lastS = s;
+        lastX = sl.px;
+        lastY = sl.py;
+        lastA = a;
+      }
+      // 竖向：上下两半分别缩放，体轴保持不动
+      const sc = clamp(s, 0, 1);
+      const up = sampleProfile(UPPER, sc);
+      const lo = sampleProfile(LOWER, sc);
+      let upL = up;
+      let loL = lo;
+      let eu = up;
+      let el = lo;
+      if (sc < 0.44 && pouch > 0) {
+        upL = sampleProfile(LUNGE_UP, sc);
+        loL = sampleProfile(LUNGE_LO, sc);
+        eu = up + (upL - up) * m;
+        el = lo + (loL - lo) * pouch;
+      }
+      // 吻端尖处游动的画非常薄，拉伸倍数设上限（那里本来就几乎是透明的），避免把边缘的半透明像素拉成细线
+      sl.ku = Math.min(5, (fu * eu) / up);
+      sl.kl = Math.min(5, (fl * el) / lo);
+      sl.kuL = (fu * eu) / upL;
+      sl.klL = (fl * el) / loL;
+      sl.alpha = s > 1 ? flukeA : 1;
+      sl.tipFade = 1 - smoothstep(0, 0.6, m) * (1 - smoothstep(0.01, 0.045, s));
+    }
   }
 
   /** 海床在鲸鱼局部坐标中、局部 x 处的 y */
@@ -328,18 +408,17 @@ export class Whale {
     return (st.seabed - st.y - lx * Math.sin(st.pitch)) / Math.cos(st.pitch);
   }
 
-  /** 口腔中心（磷虾被吞入的位置），世界坐标。 */
+  /** 口腔中心（磷虾被吞入的位置），世界坐标：张开的上下颌之间。 */
   mouthPoint(out: { x: number; y: number }): { x: number; y: number } {
-    const b = this.body;
-    const i = Math.min(b.gapeCount - 1, Math.round(b.gapeCount * 0.55));
-    const lx = (b.mux[i] + b.mlx[i]) / 2 + 0.6 * b.jawAngle;
-    const ly = (b.muy[i] + b.mly[i]) / 2;
-    return this.toWorld(lx, ly, out);
+    const a = (ROSTRUM_A + JAW_A + JAW_EXTRA * this.jaw) / 2;
+    const r = 2.6;
+    const f = this.body.frame(JAW_S, JAW_OFF, this.f);
+    return this.toWorld(f.x + r * Math.cos(f.a + a), f.y + r * Math.sin(f.a + a), out);
   }
 
   /** 吻端（头部最前方） */
   snoutPoint(out: { x: number; y: number }): { x: number; y: number } {
-    return this.toWorld(this.body.ux[0], this.body.uy[0] + 0.1, out);
+    return this.toWorld(this.body.ux[0], this.body.uy[0] + 0.15, out);
   }
 
   blowholePoint(out: { x: number; y: number }): { x: number; y: number } {
@@ -348,39 +427,35 @@ export class Whale {
   }
 
   eyePoint(out: { x: number; y: number }): { x: number; y: number } {
-    this.body.surfaceFrame(S_EYE, 0.02, this.f);
+    this.body.frame(S_EYE, ART_EYE_OFF * WHALE_LEN, this.f);
     return this.toWorld(this.f.x, this.f.y, out);
   }
 
-  private computeColors(rc: RenderCtx): void {
-    const st = this.state;
-    const sh = this.sh;
-    rc.light.shadeAt(st.x, st.y, st.z, sh);
-    const pale = (1 - st.tissue) * 0.75;
-    for (const k of Object.keys(C) as Array<keyof typeof C>) {
-      let base = C[k];
-      if (pale > 0 && (k === 'dorsal' || k === 'flank' || k === 'lowFlank' || k === 'lid' || k === 'tubercle')) {
-        base = mixRGB(base, C.pale, pale, this.tmp2);
-      } else if (pale > 0 && (k === 'belly' || k === 'bellyLight' || k === 'fin')) {
-        base = mixRGB(base, C.paleBelly, pale, this.tmp2);
-      }
-      shadeRGB(base, sh, this.tmp);
-      this.col[k] = rgba(this.tmp);
-    }
+  /** 胸鳍根部（局部坐标） */
+  finRoot(out: { x: number; y: number }): { x: number; y: number } {
+    return this.body.point(S_FIN, FIN_ROOT_V, out);
   }
 
-  private ensureLayer(rc: RenderCtx): CanvasRenderingContext2D {
+  private computeShade(rc: RenderCtx): void {
+    const st = this.state;
+    rc.light.shadeAt(st.x, st.y, st.z, this.sh);
+  }
+
+  private ensureLayers(rc: RenderCtx): void {
     const cw = rc.ctx.canvas.width;
     const ch = rc.ctx.canvas.height;
     if (!this.layer) {
       this.layer = document.createElement('canvas');
       this.layerCtx = this.layer.getContext('2d');
+      this.aux = document.createElement('canvas');
+      this.auxCtx = this.aux.getContext('2d');
     }
-    if (this.layer.width !== cw || this.layer.height !== ch) {
-      this.layer.width = cw;
-      this.layer.height = ch;
+    for (const c of [this.layer, this.aux!]) {
+      if (c.width !== cw || c.height !== ch) {
+        c.width = cw;
+        c.height = ch;
+      }
     }
-    return this.layerCtx!;
   }
 
   /** 设置鲸鱼局部坐标的绘制变换，返回屏幕缩放。 */
@@ -391,9 +466,9 @@ export class Whale {
 
   private computeBBox(rc: RenderCtx): void {
     const st = this.state;
-    const P = { x: 0, y: 0, s: 0 };
+    const P = this.P3;
     rc.cam.project(st.x, st.y, st.z, P);
-    const r = 13 * P.s;
+    const r = 0.78 * WHALE_LEN * P.s;
     this.bbox.x0 = Math.max(0, Math.floor((P.x - r) * rc.dpr));
     this.bbox.y0 = Math.max(0, Math.floor((P.y - r) * rc.dpr));
     this.bbox.x1 = Math.min(rc.ctx.canvas.width, Math.ceil((P.x + r) * rc.dpr));
@@ -404,126 +479,443 @@ export class Whale {
   onScreen(rc: RenderCtx): boolean {
     const st = this.state;
     if (st.visible <= 0.001) return false;
-    const P = { x: 0, y: 0, s: 0 };
+    const P = this.P3;
     if (!rc.cam.project(st.x, st.y, st.z, P)) return false;
-    const r = 12 * P.s;
+    const r = 0.75 * WHALE_LEN * P.s;
     return P.x + r > 0 && P.x - r < rc.w && P.y + r > 0 && P.y - r < rc.h;
   }
 
   // ------------------------------------------------------------------ 绘制
 
-  /** 口腔内部（深色腔体、鲸须板、舌头）。应在磷虾之前绘制。 */
-  drawInterior(rc: RenderCtx): void {
-    const st = this.state;
-    if (st.mouth < 0.01 || st.visible <= 0.001 || st.tissue < 0.99) return;
-    const ctx = rc.ctx;
-    const b = this.body;
-    this.computeColors(rc);
-    this.applyLocal(ctx, rc);
-    ctx.globalAlpha = st.visible;
-    const g = b.gapeCount;
-    ctx.beginPath();
-    ctx.moveTo(b.mux[0], b.muy[0]);
-    for (let i = 1; i < g; i++) ctx.lineTo(b.mux[i], b.muy[i]);
-    ctx.lineTo(b.hingeX, b.hingeY);
-    for (let i = g - 1; i >= 0; i--) ctx.lineTo(b.mlx[i], b.mly[i]);
-    ctx.closePath();
-    const grad = ctx.createLinearGradient(b.mux[0], b.muy[0], b.hingeX, b.hingeY);
-    grad.addColorStop(0, this.col.interior);
-    grad.addColorStop(1, this.col.interiorDeep);
-    ctx.fillStyle = grad;
-    ctx.fill();
-    ctx.save();
-    ctx.clip();
-    // 舌头：沿下颌的柔软隆起
-    ctx.fillStyle = this.col.tongue;
-    ctx.globalAlpha = st.visible * 0.55;
-    ctx.beginPath();
-    const i0 = Math.floor(g * 0.25);
-    ctx.moveTo(b.mlx[i0], b.mly[i0]);
-    for (let i = i0; i < g; i++) {
-      const t = (i - i0) / (g - i0);
-      const lift = Math.sin(Math.PI * t) * 0.35 * st.mouth;
-      ctx.lineTo(b.mlx[i] + 0.0, b.mly[i] - lift);
-    }
-    ctx.lineTo(b.hingeX, b.hingeY);
-    ctx.closePath();
-    ctx.fill();
-    ctx.globalAlpha = st.visible;
-    // 鲸须板：从上颌垂下的梳状结构
-    const len0 = 0.5 * clamp(st.mouth * 1.6);
-    ctx.lineCap = 'round';
-    for (let pass = 0; pass < 2; pass++) {
-      ctx.strokeStyle = pass === 0 ? this.col.baleenDark : this.col.baleen;
-      ctx.lineWidth = pass === 0 ? 0.05 : 0.022;
-      ctx.beginPath();
-      for (let i = 1; i < g - 1; i++) {
-        const t = i / (g - 1);
-        const steps = 3;
-        for (let k = 0; k < steps; k++) {
-          const u = (i + k / steps) / (g - 1);
-          if (u > 0.97) break;
-          const ix = Math.min(g - 2, Math.floor(u * (g - 1)));
-          const fr = u * (g - 1) - ix;
-          const x = lerp(b.mux[ix], b.mux[ix + 1], fr);
-          const y = lerp(b.muy[ix], b.muy[ix + 1], fr);
-          const L = len0 * (0.35 + Math.sin(Math.PI * Math.min(1, t * 1.1)) * 0.9);
-          ctx.moveTo(x, y);
-          ctx.lineTo(x - L * 0.18, y + L);
-        }
-      }
-      ctx.stroke();
-    }
-    ctx.restore();
-    ctx.globalAlpha = 1;
-  }
-
-  /** 身体、鳍、眼睛等主体。分解阶段在离屏图层中挖出柔和的空洞，露出骨骼。 */
+  /** 身体（绘画）。分解阶段在离屏图层中挖出柔和的空洞，露出骨骼。 */
   draw(rc: RenderCtx): void {
     const st = this.state;
     if (st.visible <= 0.001) return;
-    this.computeColors(rc);
+    const art = whaleArt();
+    if (!art) return;
+    this.computeShade(rc);
     this.updateContact(rc);
     const decaying = st.tissue < 0.999;
     if (decaying) {
       // 骨骼在身体之后；压进沉积物的部分同样被压痕边缘挡住
-      const clip = this.contact.sunk;
-      if (clip) {
-        rc.ctx.save();
-        this.applyLocal(rc.ctx, rc);
-        this.crestClip(rc.ctx);
+      const vis = this.skeleton.visibility(st);
+      if (vis > 0.001) {
+        const sk = this.skeleton;
+        this.renderLayer(rc, 1, vis, 0, BONE_AVG, (ctx) => sk.drawSlices(ctx, art.skeleton), (ctx, _fake, _scale, w, h) => sk.stain(ctx, st, w, h));
+        const ctx = rc.ctx;
+        ctx.save();
+        const scale = this.applyLocal(ctx, rc);
+        if (this.contact.sunk) this.crestClip(ctx);
+        ctx.globalAlpha = vis;
+        sk.drawLife(ctx, rc, st, scale);
+        ctx.restore();
+        ctx.globalAlpha = 1;
       }
-      this.skeleton.draw(rc, this.body, st, this.finPose);
-      if (clip) rc.ctx.restore();
       if (st.tissue <= 0.002) {
         this.drawBerm(rc);
         return;
       }
-      this.computeBBox(rc);
-      const bb = this.bbox;
-      if (bb.x1 <= bb.x0 || bb.y1 <= bb.y0) return;
-      const lctx = this.ensureLayer(rc);
-      lctx.setTransform(1, 0, 0, 1, 0, 0);
-      lctx.clearRect(bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
-      this.drawBodyTo(lctx, rc);
-      this.cutHoles(lctx, rc);
-      const ctx = rc.ctx;
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalAlpha = st.visible * smoothstep(0, 0.3, st.tissue);
-      ctx.drawImage(this.layer!, bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0, bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
-      ctx.globalAlpha = 1;
-      this.drawBerm(rc);
-    } else {
-      // 远处的鲸鱼：以低分辨率绘制再放大，得到柔和的“景深”轮廓
-      const soft = clamp((st.z - 35) / 90);
-      if (soft > 0.02) {
-        this.drawSoft(rc, 1 / (1 + soft * 5));
-        return;
+    }
+    // 远处的鲸鱼：以低分辨率绘制再放大，得到柔和的“景深”轮廓
+    const soft = decaying ? 0 : clamp((st.z - 35) / 90);
+    this.renderLayer(
+      rc,
+      soft > 0.02 ? 1 / (1 + soft * 5) : 1,
+      st.visible * (decaying ? smoothstep(0, 0.3, st.tissue) : 1),
+      // 分解时软组织褪成灰白
+      (1 - st.tissue) * 0.6,
+      SKIN_AVG,
+      (ctx, aux, fake, scale, w, h, k) => this.paintBody(ctx, aux, fake, scale, w, h, k),
+      (ctx, fake, scale) => {
+        ctx.globalCompositeOperation = 'source-atop';
+        this.drawSurfaceLight(ctx, fake, scale);
+        ctx.globalCompositeOperation = 'source-over';
+        if (st.tissue < 0.999) this.cutHoles(ctx, fake);
+      },
+    );
+    this.drawBerm(rc);
+  }
+
+  /** 身体：游动 / 张嘴两张画（交叉过渡）与眼睛特写。 */
+  private paintBody(lctx: CanvasRenderingContext2D, actx: CanvasRenderingContext2D, fake: RenderCtx, scale: number, sw: number, shh: number, k: number): void {
+    const art = whaleArt()!;
+    // 游动 → 张嘴：两张画在图层中按预乘透明度精确地交叉淡化，张嘴的画里上下颌之间的缝隙保持透明
+    const m = this.gape;
+    if (m < 0.999) this.drawSlices(lctx, art.swim, false);
+    if (m > 0.001) {
+      if (m >= 0.999) this.drawLunge(lctx, art.lunge);
+      else {
+        actx.save();
+        this.applyLocal(actx, fake);
+        this.drawLunge(actx, art.lunge);
+        actx.restore();
+        lctx.save();
+        lctx.setTransform(1, 0, 0, 1, 0, 0);
+        lctx.globalCompositeOperation = 'destination-out';
+        lctx.globalAlpha = m;
+        lctx.fillRect(0, 0, sw, shh);
+        lctx.globalCompositeOperation = 'lighter';
+        lctx.drawImage(this.aux!, 0, 0, sw, shh, 0, 0, sw, shh);
+        lctx.restore();
+        actx.setTransform(1, 0, 0, 1, 0, 0);
+        actx.clearRect(0, 0, sw + 2, shh + 2);
       }
-      rc.ctx.globalAlpha = st.visible;
-      this.drawBodyTo(rc.ctx, rc);
-      rc.ctx.globalAlpha = 1;
-      this.drawBerm(rc);
+    }
+    this.drawEye(lctx, scale, k);
+  }
+
+  /**
+   * 在离屏图层中画出一张画（身体或骨骼），再整体合成到画面上：
+   * paint 画出画面本身（已设为鲸鱼局部变换，并按压痕边缘裁剪）→ 深度光照与水体雾化 →
+   * finish 叠加只落在画面上的光影、分解的空洞等。k < 1 时以较低分辨率绘制（远处的柔和轮廓）。
+   */
+  private renderLayer(
+    rc: RenderCtx,
+    k: number,
+    alpha: number,
+    pale: number,
+    avg: RGB,
+    paint: (ctx: CanvasRenderingContext2D, aux: CanvasRenderingContext2D, fake: RenderCtx, scale: number, w: number, h: number, k: number) => void,
+    finish: (ctx: CanvasRenderingContext2D, fake: RenderCtx, scale: number, w: number, h: number) => void,
+  ): void {
+    this.computeBBox(rc);
+    const bb = this.bbox;
+    if (bb.x1 <= bb.x0 || bb.y1 <= bb.y0) return;
+    this.ensureLayers(rc);
+    const lctx = this.layerCtx!;
+    const actx = this.auxCtx!;
+    const sw = Math.ceil((bb.x1 - bb.x0) * k) + 2;
+    const shh = Math.ceil((bb.y1 - bb.y0) * k) + 2;
+    // 辅助图层只在游动 / 张嘴交叉过渡时使用，用完立即清空，所以这里只清主图层
+    lctx.setTransform(1, 0, 0, 1, 0, 0);
+    lctx.globalCompositeOperation = 'source-over';
+    lctx.globalAlpha = 1;
+    lctx.clearRect(0, 0, sw + 2, shh + 2);
+    // 在图层坐标系中绘制：把包围盒移到原点并缩放
+    const fake = { ...rc, ctx: lctx, dpr: rc.dpr * k } as RenderCtx;
+    const cam = rc.cam;
+    const px = cam.px;
+    const py = cam.py;
+    cam.px -= bb.x0 / rc.dpr;
+    cam.py -= bb.y0 / rc.dpr;
+    try {
+      lctx.save();
+      const scale = this.applyLocal(lctx, fake);
+      // 压进沉积物的部分被压痕边缘挡住（只裁剪画面本身；之后的光照都只作用在已有的像素上）
+      if (this.contact.sunk) this.crestClip(lctx);
+      paint(lctx, actx, fake, scale, sw, shh, k);
+      lctx.restore();
+      lctx.save();
+      this.applyLight(lctx, sw, shh, pale, avg);
+      this.applyLocal(lctx, fake);
+      finish(lctx, fake, scale, sw, shh);
+      lctx.restore();
+    } finally {
+      cam.px = px;
+      cam.py = py;
+    }
+    const ctx = rc.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = alpha;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(this.layer!, 0, 0, sw, shh, bb.x0, bb.y0, sw / k, shh / k);
+    ctx.globalAlpha = 1;
+  }
+
+  /**
+   * 张嘴的画。下颌继续下转时，把颌关节下方的扇形区域（下颌与喉囊）单独按扇形分块绘制：
+   * 下颌骨一窄条整体转动，越往后转得越少，到喉囊后缘不转；同时喉囊沿半径方向向外鼓起。
+   * 其余部分仍按条带绘制，并裁掉这块扇形。
+   */
+  private drawLunge(ctx: CanvasRenderingContext2D, art: Mipped): void {
+    const j = this.jaw;
+    if (j < 0.001) {
+      this.drawSlices(ctx, art, true);
+      return;
+    }
+    const B = ctx.getTransform();
+    const f = this.body.frame(JAW_S, JAW_OFF, { x: 0, y: 0, a: 0 });
+    const R = 0.45 * WHALE_LEN;
+    const dir = (a: number) => ({ x: Math.cos(f.a + a), y: Math.sin(f.a + a) });
+    // 1. 条带，裁掉扇形（evenodd：大矩形 + 扇形）
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-WHALE_LEN, -WHALE_LEN, 2 * WHALE_LEN, 2 * WHALE_LEN);
+    ctx.moveTo(f.x, f.y);
+    for (let i = 0; i <= 16; i++) {
+      const d = dir(lerp(JAW_A - JAW_MARGIN, POUCH_A, i / 16));
+      ctx.lineTo(f.x + d.x * R, f.y + d.y * R);
+    }
+    ctx.closePath();
+    ctx.clip('evenodd');
+    this.drawSlices(ctx, art, true);
+    ctx.restore();
+
+    // 2. 扇形分块：画像素 → 以颌关节为原点的头部坐标（米）→ 扇形变形 → 局部坐标
+    const mpp = WHALE_LEN / AXIS_PX;
+    const lv = mipLevel(Math.hypot(B.a, B.b) * mpp);
+    const img = art.levels[lv];
+    const r = 1 / (1 << lv);
+    const A0 = axisPx(JAW_S, this.q);
+    const head = new DOMMatrix()
+      .translateSelf(0, JAW_OFF)
+      .scaleSelf(mpp, mpp)
+      .rotateSelf((-AXIS_ANGLE * 180) / Math.PI)
+      .translateSelf(-A0.x, -A0.y);
+    const local = new DOMMatrix().translateSelf(f.x, f.y).rotateSelf((f.a * 180) / Math.PI);
+    const base = B.multiply(local);
+    const span = POUCH_A - (JAW_A + JAW_BONE);
+    const turn = (a: number) => JAW_EXTRA * j * (a <= JAW_A + JAW_BONE ? 1 : 1 - smoothstep(JAW_A + JAW_BONE, POUCH_A, a));
+    const swell = (a: number) => 1 + POUCH_SWELL * j * Math.pow(Math.sin(Math.PI * clamp((a - JAW_A - JAW_BONE) / span)), 1.2);
+    const a0 = JAW_A - JAW_MARGIN;
+    // 只取头部（胸鳍之前）的画面
+    const x0 = Math.floor(axisPx(0.45, { x: 0, y: 0 }).x);
+    for (let i = 0; i < FAN; i++) {
+      const sa = lerp(a0, POUCH_A, i / FAN);
+      const sb = lerp(a0, POUCH_A, (i + 1) / FAN);
+      const sc = (sa + sb) / 2;
+      const ba = sa + turn(sa);
+      const bb = sb + turn(sb);
+      const bc = sc + turn(sc);
+      const k = (bb - ba) / (sb - sa);
+      const g = swell(sc);
+      // 鼓起的幅度随角度变化：在分块内用一个剪切项线性近似，相邻分块在边界处严丝合缝
+      const dg = (swell(sb) - swell(sa)) / (sb - sa);
+      ctx.save();
+      ctx.setTransform(base);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      const e = 0.006;
+      ctx.lineTo(Math.cos(ba - e) * R * 1.6, Math.sin(ba - e) * R * 1.6);
+      ctx.lineTo(Math.cos((ba + bb) / 2) * R * 1.8, Math.sin((ba + bb) / 2) * R * 1.8);
+      ctx.lineTo(Math.cos(bb + e) * R * 1.6, Math.sin(bb + e) * R * 1.6);
+      ctx.closePath();
+      ctx.clip();
+      // 分块中心方向上：径向 x 缩放 g 并随切向 y（≈ 半径 × 角度差）线性变化，切向按 g·k 展开
+      const fan = new DOMMatrix()
+        .rotateSelf((bc * 180) / Math.PI)
+        .multiplySelf(new DOMMatrix([g, 0, dg, g * k, 0, 0]))
+        .rotateSelf((-sc * 180) / Math.PI);
+      ctx.setTransform(base.multiply(fan).multiply(head));
+      ctx.drawImage(img, x0 * r, 0, (ART_W - x0) * r, ART_H * r, x0, 0, ART_W - x0, ART_H);
+      ctx.restore();
+    }
+    ctx.setTransform(B);
+  }
+
+  /** 按条带把一张画贴到弯曲的身体上（使用 ctx 当前的局部变换）。lunge 为张嘴的画。 */
+  private drawSlices(ctx: CanvasRenderingContext2D, art: Mipped, lunge: boolean): void {
+    const B = ctx.getTransform();
+    const mpp = WHALE_LEN / AXIS_PX;
+    // 每个画像素对应的设备像素 → 缩小级别
+    const lv = mipLevel(Math.hypot(B.a, B.b) * mpp);
+    const img = art.levels[lv];
+    const r = 1 / (1 << lv);
+    const ct = Math.cos(AXIS_ANGLE);
+    const stt = Math.sin(AXIS_ANGLE);
+    const A = this.q;
+    const base = ctx.globalAlpha;
+    for (const sl of this.slices) {
+      const al = sl.alpha * (lunge ? 1 : sl.tipFade);
+      if (al <= 0.002) continue;
+      ctx.globalAlpha = base * al;
+      // 相邻条带重叠 1 像素，避免接缝处的发丝缝
+      const x0 = Math.max(0, sl.x0 - 1);
+      const w = Math.min(ART_W, sl.x1 + 1) - x0;
+      axisPx(sl.s, A);
+      const ku = lunge ? sl.kuL : sl.ku;
+      const kl = lunge ? sl.klL : sl.kl;
+      if (Math.abs(ku - 1) < 1e-3 && Math.abs(kl - 1) < 1e-3) {
+        this.sliceTransform(ctx, B, sl, A, 1, mpp, ct, stt);
+        ctx.drawImage(img, x0 * r, 0, w * r, ART_H * r, x0, 0, w, ART_H);
+      } else {
+        // 体轴上下两半分别缩放，在体轴处重叠 1 像素
+        const ya = Math.ceil(A.y) + 1;
+        const yb = Math.floor(A.y) - 1;
+        this.sliceTransform(ctx, B, sl, A, ku, mpp, ct, stt);
+        ctx.drawImage(img, x0 * r, 0, w * r, ya * r, x0, 0, w, ya);
+        this.sliceTransform(ctx, B, sl, A, kl, mpp, ct, stt);
+        ctx.drawImage(img, x0 * r, yb * r, w * r, (ART_H - yb) * r, x0, yb, w, ART_H - yb);
+      }
+    }
+    ctx.globalAlpha = base;
+    ctx.setTransform(B);
+  }
+
+  /** 画像素 → 局部坐标：平移到体轴点、转正体轴、按米缩放（竖向乘以 ky），再放到身体的局部坐标系 */
+  private sliceTransform(
+    ctx: CanvasRenderingContext2D,
+    B: DOMMatrix,
+    sl: Slice,
+    A: { x: number; y: number },
+    ky: number,
+    mpp: number,
+    ct: number,
+    stt: number,
+  ): void {
+    const cf = Math.cos(sl.a);
+    const sf = Math.sin(sl.a);
+    const a = mpp * (cf * ct + ky * sf * stt);
+    const c = mpp * (cf * stt - ky * sf * ct);
+    const b = mpp * (sf * ct - ky * cf * stt);
+    const d = mpp * (sf * stt + ky * cf * ct);
+    const e = sl.px - (a * A.x + c * A.y);
+    const f = sl.py - (b * A.x + d * A.y);
+    ctx.setTransform(B.a * a + B.c * b, B.b * a + B.d * b, B.a * c + B.c * d, B.b * c + B.d * d, B.a * e + B.c * f + B.e, B.b * e + B.d * f + B.f);
+  }
+
+  /**
+   * 眼睛特写：靠近时（或眼睑开始合上时）叠在身体画的眼睛上，边缘已羽化。
+   * 眼睑从睁眼的画扫到闭眼的画：上方的一部分换成闭眼的画，分界线随睁开程度下移。
+   */
+  private drawEye(ctx: CanvasRenderingContext2D, scale: number, k: number): void {
+    const st = this.state;
+    const art = whaleArt()!;
+    const e = clamp(st.eye);
+    const near = smoothstep(22, 60, scale);
+    const a = Math.max(near, e < 0.999 ? 1 : 0) * smoothstep(0.75, 0.95, st.tissue);
+    if (a <= 0.01) return;
+    const size = EYE_ART.sizeOfLen * WHALE_LEN;
+    const px = size / EYE_ART.w;
+    this.body.frame(S_EYE, ART_EYE_OFF * WHALE_LEN, this.f);
+    ctx.save();
+    ctx.translate(this.f.x, this.f.y);
+    ctx.rotate(this.f.a - AXIS_ANGLE);
+    ctx.scale(px, px);
+    ctx.translate(-EYE_ART.px, -EYE_ART.py);
+    ctx.globalAlpha = a;
+    ctx.drawImage(art.eyeOpen, 0, 0);
+    if (e < 0.999) {
+      // 屏幕上眼睛有多大，就用多大的图层（最多原画尺寸）
+      const res = clamp(scale * size * k * 1.5, 128, EYE_ART.w);
+      ctx.drawImage(this.lidLayer(e, res), 0, 0, res, (res * EYE_ART.h) / EYE_ART.w, 0, 0, EYE_ART.w, EYE_ART.h);
+    }
+    ctx.restore();
+  }
+
+  /** 闭眼的画，只保留眼睑分界线以上、眼裂附近的部分 */
+  private lidLayer(e: number, res: number): HTMLCanvasElement {
+    const art = whaleArt()!;
+    if (!this.eyeLayer) {
+      this.eyeLayer = document.createElement('canvas');
+      this.eyeLayer.width = EYE_ART.w;
+      this.eyeLayer.height = EYE_ART.h;
+      this.eyeCtx = this.eyeLayer.getContext('2d');
+    }
+    const c = this.eyeCtx!;
+    const S = res / EYE_ART.w;
+    const W = res;
+    const H = (res * EYE_ART.h) / EYE_ART.w;
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.globalCompositeOperation = 'source-over';
+    c.clearRect(0, 0, EYE_ART.w, EYE_ART.h);
+    c.drawImage(art.eyeClosed, 0, 0, W, H);
+    c.globalCompositeOperation = 'destination-in';
+    const side = EYE_ART.w * S;
+    const pupilX = EYE_ART.px * S;
+    const pupilY = EYE_ART.py * S;
+    const openY = pupilY - 0.75 * EYE_ART.almondH * side;
+    const shutY = pupilY + 0.75 * EYE_ART.almondH * side;
+    const edge = lerp(openY, shutY, 1 - e);
+    const soft = 0.012 * side;
+    const g = c.createLinearGradient(0, edge - soft, 0, edge + soft);
+    g.addColorStop(0, 'rgba(0,0,0,1)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = g;
+    c.fillRect(0, 0, W, H);
+    // 只在眼裂附近的椭圆内替换
+    c.translate(pupilX, pupilY);
+    c.scale(0.75 * EYE_ART.almondW * side * 1.1, 1.25 * EYE_ART.almondH * side * 1.1);
+    const r = c.createRadialGradient(0, 0, 0, 0, 0, 1);
+    r.addColorStop(0.727, 'rgba(0,0,0,1)');
+    r.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = r;
+    c.fillRect(-20, -20, 40, 40);
+    return this.eyeLayer;
+  }
+
+  /**
+   * 深度光照与水体雾化，与程序绘制的物体使用同一个着色模型（core/color.ts 的 shadeRGB）：
+   * 颜色先逐通道乘以光照（深处更暗、更蓝，鲸落附近带一点暖色散射光），再混向该处海水的颜色；
+   * 分解时还先褪向灰白。整个变换近似为一次 source-atop 填充 c′ = (1 − a)·c + a·X：
+   * 逐通道的色偏只按画面的平均颜色 avg 计算（画面本身接近灰色，误差在 2% 以内），
+   * 这样只需一次全图层的合成，手机上也很轻。
+   */
+  private applyLight(ctx: CanvasRenderingContext2D, w: number, h: number, pale: number, avg: RGB): void {
+    const sh = this.sh;
+    const wm = sh.warm * 0.55;
+    const M = [
+      Math.min(1, sh.light * sh.tint[0] + wm * (242 / 255)),
+      Math.min(1, sh.light * sh.tint[1] + wm * (199 / 255)),
+      Math.min(1, sh.light * sh.tint[2] + wm * (124 / 255)),
+    ];
+    const m = (M[0] + M[1] + M[2]) / 3;
+    const f = sh.fog;
+    const keep = (1 - f) * m * (1 - pale);
+    const a = 1 - keep;
+    if (a < 0.004) return;
+    const X: RGB = [0, 0, 0];
+    for (let i = 0; i < 3; i++) {
+      const pi = PALE[i] / 255;
+      const avgI = (1 - pale) * (avg[i] / 255) + pale * pi;
+      const d = (1 - f) * (m * pale * pi + (M[i] - m) * avgI) + (f * sh.fogC[i]) / 255;
+      X[i] = clamp(d / a) * 255;
+    }
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = rgba(X, a);
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+
+  /**
+   * 叠在画面上的光影（只落在身体上）：靠近海面时流动的焦散光网、接触海床处的遮蔽、
+   * 深海里来自上方的散射光与冷色轮廓光、近景的皮肤细节，以及从下方仰视时被海面勾出的背部轮廓。
+   */
+  private drawSurfaceLight(ctx: CanvasRenderingContext2D, rc: RenderCtx, scale: number): void {
+    const st = this.state;
+    const b = this.body;
+    const n = b.n;
+    const L = WHALE_LEN;
+    const caust = st.y > 2.4 ? Math.exp(-(st.y - 2.4) / 9) : 0;
+    // 焦散光网（靠近海面时在皮肤上流动）
+    if (rc.quality.caustics && caust > 0.08 && st.tissue > 0.99) {
+      const tex = textures().caustic;
+      const tile = 3.2;
+      for (let layer = 0; layer < 2; layer++) {
+        const ox = ((rc.time * (layer ? 0.21 : -0.17)) % tile) - tile;
+        const oy = ((rc.time * (layer ? 0.09 : 0.13)) % tile) - tile;
+        ctx.globalAlpha = 0.07 * caust * (layer ? 0.8 : 1) * clamp(90 / scale);
+        for (let x = -0.6 * L + ox; x < 0.45 * L; x += tile) {
+          for (let y = -2.6 + oy; y < 3; y += tile) ctx.drawImage(tex, x, y, tile, tile);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+    this.drawBodyContactShade(ctx);
+    this.drawDeepLight(ctx, rc);
+    // 近景：细小的毛孔、斑点与浅浅的褶痕（只铺在镜头附近，开销很小）
+    if (scale > 70 && st.tissue > 0.99) this.drawSkinDetail(ctx, rc, scale);
+    // 逆光：镜头位于鲸鱼下方时，身体背着明亮的海面变暗，边缘被海面的光勾勒出来
+    const below = clamp((rc.cam.cy - st.y - 2.5) / 8);
+    const rim = below * clamp(rc.light.sunAt(st.y - 15) * 1.4);
+    if (rim > 0.02) {
+      ctx.fillStyle = `rgba(6,22,42,${0.4 * rim})`;
+      ctx.fillRect(-0.7 * L, -5, 1.3 * L, 14);
+      ctx.beginPath();
+      ctx.moveTo(b.ux[0], b.uy[0]);
+      through(ctx, b.ux, b.uy, 0, n - 1);
+      for (const [lw, a] of [
+        [1.2, 0.06],
+        [0.6, 0.1],
+        [0.24, 0.2],
+        [0.08, 0.35],
+      ] as const) {
+        ctx.strokeStyle = `rgba(200,240,255,${a * rim})`;
+        ctx.lineWidth = lw;
+        ctx.stroke();
+      }
     }
   }
 
@@ -554,7 +946,7 @@ export class Whale {
       c.gap[i] = st.seabed - (st.y + lx * sp + ly * cp);
       if (c.gap[i] < minGap) minGap = c.gap[i];
     }
-    if (minGap > 3) return;
+    if (minGap > 5) return;
     c.near = true;
     const cam = rc.cam;
     const P = this.P3;
@@ -565,14 +957,14 @@ export class Whale {
       const r = 0.85 * b.lo0[i];
       const d = -c.gap[i] + Math.sin(b.rl[i]) * r * 0.3;
       c.cx[i] = lx;
-      c.cy[i] = ly + 6;
+      c.cy[i] = ly + 10;
       c.d[i] = 0;
       if (d <= 0) continue;
       const w = Math.sqrt(Math.max(0, 2 * r * d - d * d));
       // 被挤到两侧的软泥：低矮、不规则，不会像沙堆一样隆起
-      const berm = (0.04 + 0.3 * d) * (0.8 + 0.35 * noise1(b.s[i] * 19, 5)) * smoothstep(0, 0.06, d);
+      const berm = (0.06 + 0.3 * d) * (0.8 + 0.35 * noise1(b.s[i] * 19, 5)) * smoothstep(0, 0.1, d);
       const wx = st.x + lx * cp - ly * sp;
-      if (!cam.project(wx, st.seabed - berm, st.z - (0.9 * w + 0.12), P)) continue;
+      if (!cam.project(wx, st.seabed - berm, st.z - (0.9 * w + 0.2), P)) continue;
       cam.unproject(P.x, P.y, st.z, this.p);
       const dx = this.p.x - st.x;
       const dy = this.p.y - st.y;
@@ -587,12 +979,14 @@ export class Whale {
   private crestClip(ctx: CanvasRenderingContext2D): void {
     const c = this.contact;
     const n = this.body.n;
+    const L = WHALE_LEN;
     ctx.beginPath();
-    ctx.moveTo(c.cx[0] + 9, -40);
-    ctx.lineTo(c.cx[0] + 9, c.cy[0]);
+    ctx.moveTo(c.cx[0] + 0.65 * L, -3 * L);
+    ctx.lineTo(c.cx[0] + 0.65 * L, c.cy[0]);
     for (let i = 0; i < n; i++) ctx.lineTo(c.cx[i], c.cy[i]);
-    ctx.lineTo(c.cx[n - 1] - 9, c.cy[n - 1]);
-    ctx.lineTo(c.cx[n - 1] - 9, -40);
+    // 尾叶在缺刻之后：沿最后一段的高度继续延伸
+    ctx.lineTo(c.cx[n - 1] - 0.65 * L, c.cy[n - 1]);
+    ctx.lineTo(c.cx[n - 1] - 0.65 * L, -3 * L);
     ctx.closePath();
     ctx.clip();
   }
@@ -604,7 +998,7 @@ export class Whale {
    */
   drawContact(rc: RenderCtx): void {
     const st = this.state;
-    if (st.visible <= 0.001) return;
+    if (st.visible <= 0.001 || !whaleArt()) return;
     this.updateContact(rc);
     const c = this.contact;
     if (!c.near) return;
@@ -618,22 +1012,21 @@ export class Whale {
     // 隔一个采样绘制一片（相邻的软阴影大量重叠，减半数量不影响观感）
     for (let i = 0; i < b.n; i += 2) {
       const g = c.gap[i];
-      if (g > 2.6) continue;
+      if (g > 4.4) continue;
       const lx = b.px[i] - b.nx[i] * b.lo0[i];
       const ly = b.py[i] - b.ny[i] * b.lo0[i];
       const wx = st.x + lx * cp - ly * sp;
       const r = 0.85 * b.lo0[i];
       const lift = Math.max(0, g);
       // 接触阴影：越贴近海床越深、越集中
-      this.groundBlob(rc, wx, st.seabed, st.z - 0.3 * r, 0.9 + 0.4 * lift, 0.5 * r + 0.55 * lift + 0.15, 0.34 * Math.exp(-lift / 0.4) * k0);
+      this.groundBlob(rc, wx, st.seabed, st.z - 0.3 * r, 1.5 + 0.4 * lift, 0.5 * r + 0.55 * lift + 0.25, 0.34 * Math.exp(-lift / 0.7) * k0);
       // 宽而淡的环境遮蔽
-      if (i % 6 === 0) this.groundBlob(rc, wx, st.seabed, st.z - 0.15 * r, 2.4, 1.25 * r + 0.9 * lift, 0.13 * Math.exp(-lift / 1.4) * k0);
+      if (i % 6 === 0) this.groundBlob(rc, wx, st.seabed, st.z - 0.15 * r, 4, 1.25 * r + 0.9 * lift, 0.13 * Math.exp(-lift / 2.4) * k0);
     }
     // 胸鳍与尾叶：落在海床上的部分各有一小片软阴影
     const kf = k0 * smoothstep(0.12, 0.5, st.tissue);
     if (kf > 0.01) {
-      this.finShadow(rc, this.finPose, -0.5, 0, kf);
-      this.finShadow(rc, this.finFarPose, -0.32, 0.25, kf * 0.6);
+      this.finShadow(rc, kf);
       this.flukeShadow(rc, kf);
     }
     ctx.globalAlpha = 1;
@@ -667,55 +1060,50 @@ export class Whale {
     const X = this.p.x;
     const Y = this.p.y;
     // 离海床越高，阴影越淡（高于海床的部分不在海床上）
-    const k = a * smoothstep(-0.35, 0.05, Y - st.seabed);
+    const k = a * smoothstep(-0.6, 0.08, Y - st.seabed);
     if (k < 0.004 || Y - cam.cy < 0.2) return;
     const zw = st.z - cam.cz;
     let z = cam.cz + ((st.seabed - cam.cy) * zw) / Math.max(st.seabed - cam.cy + 0.01, Y - cam.cy);
-    z = clamp(z, st.z - 6, st.z + 2.5);
+    z = clamp(z, st.z - 10, st.z + 4);
     const gx = cam.cx + ((X - cam.cx) * (z - cam.cz)) / zw;
     this.groundBlob(rc, gx, st.seabed, z, rx, rz, k);
   }
 
-  /** 胸鳍中线上 t 处（0 根部 ~ 1 鳍尖）的局部坐标 */
-  private finCenter(pose: FinPose, v: number, dx: number, t: number, out: { x: number; y: number }): { x: number; y: number } {
-    this.body.point(S_FIN, v, out);
-    const L = FIN_LEN * pose.len;
-    // 弯折沿鳍长平滑分布：对方向角积分（数值积分，10 步）
-    let x = 0;
-    let y = 0;
-    const steps = 10;
-    for (let j = 0; j < steps; j++) {
-      const u = ((j + 0.5) / steps) * t;
-      const th = pose.a + pose.bend * smoothstep(0.25, 0.75, u);
-      x += Math.cos(th) * (L * t) / steps;
-      y += Math.sin(th) * (L * t) / steps;
-    }
-    out.x += x + dx;
-    out.y += y;
-    return out;
-  }
-
-  private finShadow(rc: RenderCtx, pose: FinPose, v: number, dx: number, a: number): void {
-    const q = this.q;
+  private finShadow(rc: RenderCtx, a: number): void {
+    const root = this.finRoot(this.q);
+    const pose = this.finPose;
     for (let j = 0; j < 4; j++) {
       const t = 0.4 + j * 0.2;
-      this.finCenter(pose, v, dx, t, q);
-      this.groundShadowAt(rc, q.x, q.y, 0.55 * pose.len, 0.3 + 0.25 * pose.wid * (1 - t), 0.2 * a);
+      const x = root.x + Math.cos(pose.a) * FIN_LEN * t;
+      const y = root.y + Math.sin(pose.a) * FIN_LEN * t;
+      this.groundShadowAt(rc, x, y, 0.55, 0.35 + 0.3 * (1 - t), 0.2 * a);
     }
   }
 
   private flukeShadow(rc: RenderCtx, a: number): void {
-    const b = this.body;
-    const n = b.n;
-    const c = Math.cos(b.flukeAngle);
-    const s = Math.sin(b.flukeAngle);
-    for (const [fx, fy] of [
-      [0.6, 0.1],
-      [1.25, 2.0 * this.kFar],
-      [1.25, 2.0 * this.kNear],
-    ] as const) {
-      this.groundShadowAt(rc, b.px[n - 1] + fx * c - fy * s, b.py[n - 1] + fx * s + fy * c, 0.75, 0.5, 0.2 * a);
+    const last = this.slices[this.slices.length - 1];
+    for (const pt of [FLUKE_MID, FLUKE_TIP, FLUKE_UP]) {
+      this.artToLocal(last, pt.x, pt.y, this.q);
+      this.groundShadowAt(rc, this.q.x, this.q.y, 1.2, 0.8, 0.2 * a);
     }
+  }
+
+  /** 画框像素 → 局部坐标（按某一条带的摆放；尾叶各点都用最后一条带，因为尾叶是刚性的） */
+  private artToLocal(sl: Slice, x: number, y: number, out: { x: number; y: number }): { x: number; y: number } {
+    const mpp = WHALE_LEN / AXIS_PX;
+    const A = axisPx(sl.s, this.p);
+    const dx = x - A.x;
+    const dy = y - A.y;
+    const ct = Math.cos(-AXIS_ANGLE);
+    const st = Math.sin(-AXIS_ANGLE);
+    const u = (dx * ct - dy * st) * mpp;
+    const v0 = (dx * st + dy * ct) * mpp;
+    const v = v0 * (v0 < 0 ? sl.ku : sl.kl);
+    const c = Math.cos(sl.a);
+    const s = Math.sin(sl.a);
+    out.x = sl.px + u * c - v * s;
+    out.y = sl.py + u * s + v * c;
+    return out;
   }
 
   /** 压痕边缘：被挤到身体两侧、略微隆起的软泥，顶部接住一点顶光，前坡稍暗；还有零星被带起的泥块 */
@@ -735,8 +1123,8 @@ export class Whale {
     for (let pass = 0; pass < 3; pass++) {
       // 0：前坡的暗部（略低于边缘）；1：边缘的柔和亮边；2：最亮的一线
       ctx.strokeStyle = pass === 0 ? shadeC : lip;
-      ctx.lineWidth = pass === 0 ? 0.2 : pass === 1 ? 0.09 : 0.035;
-      const oy = pass === 0 ? 0.12 : 0;
+      ctx.lineWidth = pass === 0 ? 0.32 : pass === 1 ? 0.14 : 0.05;
+      const oy = pass === 0 ? 0.18 : 0;
       const am = pass === 0 ? 0.16 : pass === 1 ? 0.16 : 0.22;
       let i = 0;
       while (i < b.n) {
@@ -749,7 +1137,7 @@ export class Whale {
         let sum = c.d[i];
         while (j + 1 < b.n && c.d[j + 1] > 0) sum += c.d[++j];
         if (j > i) {
-          ctx.globalAlpha = am * fade * smoothstep(0.0, 0.12, sum / (j - i + 1));
+          ctx.globalAlpha = am * fade * smoothstep(0.0, 0.2, sum / (j - i + 1));
           ctx.beginPath();
           ctx.moveTo(c.cx[i], c.cy[i] + oy);
           for (let k = i + 1; k <= j; k++) ctx.lineTo(c.cx[k], c.cy[k] + oy);
@@ -762,49 +1150,21 @@ export class Whale {
     if (scale > 25) {
       ctx.fillStyle = lip;
       for (let i = 1; i < b.n - 1; i++) {
-        if (c.d[i] < 0.03) continue;
+        if (c.d[i] < 0.05) continue;
         for (let j = 0; j < 2; j++) {
           const h = hash1(i * 11 + j * 3 + 7);
           if (h > 0.55) continue;
           const t = hash1(i * 5 + j);
           const x = lerp(c.cx[i], c.cx[i + 1], t);
-          const y = lerp(c.cy[i], c.cy[i + 1], t) + (hash1(i * 7 + j) - 0.3) * 0.12;
-          const r = 0.02 + 0.035 * hash1(i * 13 + j);
-          ctx.globalAlpha = 0.35 * fade * smoothstep(0.03, 0.12, c.d[i]);
+          const y = lerp(c.cy[i], c.cy[i + 1], t) + (hash1(i * 7 + j) - 0.3) * 0.2;
+          const r = 0.03 + 0.05 * hash1(i * 13 + j);
+          ctx.globalAlpha = 0.35 * fade * smoothstep(0.05, 0.2, c.d[i]);
           ctx.beginPath();
           ctx.ellipse(x, y, r * 1.5, r, 0, 0, TAU);
           ctx.fill();
         }
       }
     }
-    ctx.globalAlpha = 1;
-  }
-
-  private drawSoft(rc: RenderCtx, k: number): void {
-    const st = this.state;
-    this.computeBBox(rc);
-    const bb = this.bbox;
-    if (bb.x1 <= bb.x0 || bb.y1 <= bb.y0) return;
-    const lctx = this.ensureLayer(rc);
-    const sw = Math.ceil((bb.x1 - bb.x0) * k) + 2;
-    const shh = Math.ceil((bb.y1 - bb.y0) * k) + 2;
-    lctx.setTransform(1, 0, 0, 1, 0, 0);
-    lctx.clearRect(0, 0, sw + 2, shh + 2);
-    // 在缩小的坐标系中绘制：平移到包围盒原点并缩放
-    const fake = { ...rc, ctx: lctx, dpr: rc.dpr * k } as RenderCtx;
-    const cam = rc.cam;
-    const px = cam.px;
-    const py = cam.py;
-    cam.px -= bb.x0 / rc.dpr;
-    cam.py -= bb.y0 / rc.dpr;
-    this.drawBodyTo(lctx, fake);
-    cam.px = px;
-    cam.py = py;
-    const ctx = rc.ctx;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = st.visible;
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(this.layer!, 0, 0, sw, shh, bb.x0, bb.y0, sw / k, shh / k);
     ctx.globalAlpha = 1;
   }
 
@@ -827,206 +1187,17 @@ export class Whale {
         ctx.drawImage(dot, this.p.x + Math.cos(a) * d - rr, this.p.y + Math.sin(a) * d - rr, rr * 2, rr * 2);
       }
     }
+    // 尾叶里没有骨骼：分解后期整片消失
+    if (st.tissue < 0.4) {
+      const last = this.slices[this.slices.length - 1];
+      ctx.globalAlpha = 1 - smoothstep(0.12, 0.4, st.tissue);
+      for (const pt of [FLUKE_MID, FLUKE_TIP, FLUKE_UP]) {
+        this.artToLocal(last, pt.x, pt.y, this.q);
+        ctx.drawImage(dot, this.q.x - 2, this.q.y - 2, 4, 4);
+      }
+    }
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-  }
-
-  private bodyPath(ctx: CanvasRenderingContext2D): void {
-    const b = this.body;
-    const n = b.n;
-    const g = b.gapeCount;
-    ctx.beginPath();
-    ctx.moveTo(b.ux[0], b.uy[0]);
-    through(ctx, b.ux, b.uy, 0, n - 1);
-    ctx.lineTo(b.bx[n - 1], b.by[n - 1]);
-    through(ctx, b.bx, b.by, n - 1, 0);
-    ctx.lineTo(b.mlx[0], b.mly[0]);
-    through(ctx, b.mlx, b.mly, 0, g - 1);
-    ctx.lineTo(b.hingeX, b.hingeY);
-    ctx.lineTo(b.mux[g - 1], b.muy[g - 1]);
-    through(ctx, b.mux, b.muy, g - 1, 0);
-    ctx.closePath();
-  }
-
-  private drawBodyTo(ctx: CanvasRenderingContext2D, rc: RenderCtx): void {
-    const st = this.state;
-    const b = this.body;
-    const col = this.col;
-    const n = b.n;
-    const g = b.gapeCount;
-    const scale = this.applyLocal(ctx, rc);
-    const sun = rc.light.sunAt(st.y);
-    const caust = st.y > 2.4 ? Math.exp(-(st.y - 2.4) / 9) : 0;
-
-    // 压进沉积物的部分被近侧压痕边缘挡住（远侧鳍、尾叶与身体都在边缘之后）
-    const sunk = this.contact.sunk;
-    if (sunk) {
-      ctx.save();
-      this.crestClip(ctx);
-    }
-    // 远侧胸鳍（在身体之后）
-    this.drawFin(ctx, true);
-    // 尾鳍
-    this.drawFluke(ctx);
-
-    // ---- 身体
-    this.bodyPath(ctx);
-    // 静卧时身体略向镜头一侧侧倾：背部的深色延伸得更低，浅色的腹部更多地转到下方
-    const roll = smoothstep(0.25, 0.95, st.rest);
-    const grad = ctx.createLinearGradient(0, -1.7, 0, 1.95);
-    grad.addColorStop(0, col.dorsal);
-    grad.addColorStop(0.45 + 0.08 * roll, col.flank);
-    grad.addColorStop(0.66 + 0.08 * roll, col.lowFlank);
-    grad.addColorStop(0.8 + 0.07 * roll, col.belly);
-    grad.addColorStop(1, col.bellyLight);
-    ctx.fillStyle = grad;
-    ctx.fill();
-
-    ctx.save();
-    ctx.clip();
-
-    // 喉腹褶区域（从下颌到肚脐），张嘴时被撑开变浅
-    const iEnd = b.indexAt(0.58);
-    const hx = b.hingeX;
-    const hy = b.hingeY;
-    b.point(0.6, -0.42, this.p);
-    const qx = this.p.x;
-    const qy = this.p.y;
-    const topX = (i: number) => (i < g ? b.mlx[i] : lerp(hx, qx, (b.s[i] - S_GAPE) / (0.6 - S_GAPE)));
-    const topY = (i: number) => (i < g ? b.mly[i] : lerp(hy, qy, (b.s[i] - S_GAPE) / (0.6 - S_GAPE)));
-    ctx.beginPath();
-    ctx.moveTo(topX(0), topY(0));
-    for (let i = 1; i <= iEnd; i++) ctx.lineTo(topX(i), topY(i));
-    for (let i = iEnd; i >= 0; i--) ctx.lineTo(b.bx[i], b.by[i]);
-    ctx.closePath();
-    const tg = ctx.createLinearGradient(0, 0, 0, 2.2 + st.throat * 2);
-    tg.addColorStop(0, col.lowFlank);
-    tg.addColorStop(0.45, col.belly);
-    tg.addColorStop(1, col.bellyLight);
-    ctx.fillStyle = tg;
-    ctx.globalAlpha = 0.55 + 0.45 * st.throat;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-
-    // 斑驳的花纹
-    for (const m of this.mottles) {
-      b.point(m.s, m.v, this.p);
-      ctx.fillStyle = m.dark ? col.flank : col.belly;
-      ctx.globalAlpha = m.dark ? 0.5 : 0.14;
-      ctx.beginPath();
-      ctx.ellipse(this.p.x, this.p.y, m.r * 1.6, m.r, m.rot * 0.3, 0, TAU);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-
-    // 喉腹褶线条
-    const pleats = 11;
-    ctx.lineWidth = Math.min(0.028 + st.throat * 0.03, 2.2 / scale);
-    ctx.strokeStyle = st.throat > 0.3 ? col.lowFlank : col.pleat;
-    ctx.globalAlpha = 0.42 + 0.2 * st.throat;
-    ctx.beginPath();
-    const i0 = b.indexAt(0.025);
-    for (let j = 1; j <= pleats; j++) {
-      const f = Math.pow(j / (pleats + 1), 0.82);
-      for (let i = i0; i <= iEnd; i++) {
-        const t = (b.s[i] - 0.025) / (0.58 - 0.025);
-        const taper = Math.sin(Math.PI * clamp(t)) * 0.25 + 0.75;
-        const ff = 1 - (1 - f) * taper;
-        const x = lerp(topX(i), b.bx[i], ff);
-        const y = lerp(topY(i), b.by[i], ff);
-        if (i === i0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-    }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-
-    // 焦散光网（靠近海面时在皮肤上流动）
-    if (rc.quality.caustics && caust > 0.08 && st.tissue > 0.99) {
-      const tex = textures().caustic;
-      ctx.globalCompositeOperation = 'lighter';
-      const tile = 3.2;
-      for (let layer = 0; layer < 2; layer++) {
-        const ox = ((rc.time * (layer ? 0.21 : -0.17)) % tile) - tile;
-        const oy = ((rc.time * (layer ? 0.09 : 0.13)) % tile) - tile;
-        ctx.globalAlpha = 0.045 * caust * (layer ? 0.8 : 1) * clamp(90 / scale);
-        for (let x = -9 + ox; x < 7.5; x += tile) {
-          for (let y = -2.6 + oy; y < 4; y += tile) ctx.drawImage(tex, x, y, tile, tile);
-        }
-      }
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 1;
-    }
-
-    // 体积感：腹侧暗部与背部边缘光（静卧时改由下方按实际接触计算的遮蔽代替这条均匀的暗边）
-    ctx.strokeStyle = `rgba(5,12,22,${0.32 * (1 - 0.8 * st.rest)})`;
-    ctx.lineWidth = 0.7;
-    ctx.beginPath();
-    ctx.moveTo(b.bx[0], b.by[0]);
-    through(ctx, b.bx, b.by, 0, n - 1);
-    ctx.stroke();
-    if (sun > 0.05 || st.y < 5) {
-      ctx.strokeStyle = rgba(C.rim, 0.22 * Math.max(sun, 0.25));
-      ctx.lineWidth = 0.14;
-      ctx.beginPath();
-      ctx.moveTo(b.ux[0], b.uy[0]);
-      through(ctx, b.ux, b.uy, 0, n - 1);
-      ctx.stroke();
-    }
-    // 皮肤纹理
-    ctx.globalAlpha = 0.28;
-    ctx.drawImage(textures().skin, -8.3, -1.8, 14.4, 4.4);
-    ctx.globalAlpha = 1;
-    this.drawBodyContactShade(ctx);
-    this.drawDeepLight(ctx, rc);
-    // 近景：细小的毛孔、斑点与浅浅的褶痕（只铺在镜头附近，开销很小）
-    if (scale > 70 && st.tissue > 0.99) this.drawSkinDetail(ctx, rc, scale);
-    // 逆光：镜头位于鲸鱼下方时，身体背着明亮的海面变暗，边缘被海面的光勾勒出来
-    const below = clamp((rc.cam.cy - st.y - 1.5) / 5);
-    const rim = below * clamp(rc.light.sunAt(st.y - 15) * 1.4);
-    if (rim > 0.02) {
-      ctx.fillStyle = `rgba(6,22,42,${0.4 * rim})`;
-      ctx.fillRect(-9.5, -3, 17, 9);
-      // 只沿背部上缘：由宽到窄的几层描边在裁剪区内叠出柔和的内侧光边
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.beginPath();
-      ctx.moveTo(b.ux[0], b.uy[0]);
-      through(ctx, b.ux, b.uy, 0, n - 1);
-      for (const [lw, a] of [
-        [0.7, 0.05],
-        [0.36, 0.08],
-        [0.14, 0.16],
-        [0.05, 0.3],
-      ] as const) {
-        ctx.strokeStyle = `rgba(200,240,255,${a * rim})`;
-        ctx.lineWidth = lw;
-        ctx.stroke();
-      }
-      ctx.globalCompositeOperation = 'source-over';
-    }
-    ctx.restore();
-
-    // 嘴线（闭嘴时为一条带上扬的暗线）
-    ctx.strokeStyle = col.socket;
-    ctx.lineWidth = Math.min(0.045, 3 / scale);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(b.mux[0], b.muy[0]);
-    through(ctx, b.mux, b.muy, 0, g - 1);
-    ctx.stroke();
-    if (st.mouth > 0.02) {
-      ctx.beginPath();
-      ctx.moveTo(b.mlx[0], b.mly[0]);
-      through(ctx, b.mlx, b.mly, 0, g - 1);
-      ctx.stroke();
-    }
-
-    this.drawTubercles(ctx);
-    this.drawBlowhole(ctx);
-    this.drawEye(ctx, scale);
-    if (sunk) ctx.restore();
-    // 近侧胸鳍（在压痕边缘之前，向外展开落在镜头一侧的海床上）
-    this.drawFin(ctx, false);
   }
 
   /**
@@ -1041,13 +1212,13 @@ export class Whale {
     const k = this.state.visible;
     for (let i = 1; i < b.n - 1; i++) {
       const g = c.gap[i];
-      if (g > 0.7) continue;
-      const a = 0.16 * (1 - clamp(g / 0.7)) * k;
+      if (g > 1.2) continue;
+      const a = 0.18 * (1 - clamp(g / 1.2)) * k;
       if (a < 0.005) continue;
       // 可见的下缘：压痕边缘与腹侧轮廓中较高的一个
       const y = Math.min(c.cy[i], b.by[i]);
       const x = c.d[i] > 0 ? c.cx[i] : b.bx[i];
-      const r = 0.55 + 0.25 * clamp(-g / 0.25);
+      const r = 0.95 + 0.4 * clamp(-g / 0.4);
       ctx.globalAlpha = a;
       ctx.drawImage(tex, x - r, y - r * 0.7, r * 2, r * 1.4);
     }
@@ -1064,21 +1235,22 @@ export class Whale {
     if (deep < 0.02) return;
     const b = this.body;
     const n = b.n;
-    const g = ctx.createLinearGradient(0, -1.9, 0, 1.9);
-    g.addColorStop(0, `rgba(180,205,225,${0.11 * deep})`);
+    const L = WHALE_LEN;
+    const g = ctx.createLinearGradient(0, -2.4, 0, 2.6);
+    g.addColorStop(0, `rgba(180,205,225,${0.13 * deep})`);
     g.addColorStop(0.35, 'rgba(180,205,225,0)');
     g.addColorStop(0.7, 'rgba(3,8,16,0)');
-    g.addColorStop(1, `rgba(3,8,16,${0.2 * deep})`);
+    g.addColorStop(1, `rgba(3,8,16,${0.24 * deep})`);
     ctx.fillStyle = g;
-    ctx.fillRect(-9.5, -3, 17, 7);
+    ctx.fillRect(-0.7 * L, -5, 1.3 * L, 10);
     ctx.beginPath();
     ctx.moveTo(b.ux[0], b.uy[0]);
     through(ctx, b.ux, b.uy, 0, n - 1);
-    ctx.strokeStyle = `rgba(185,220,240,${0.13 * deep})`;
-    ctx.lineWidth = 0.16;
+    ctx.strokeStyle = `rgba(185,220,240,${0.16 * deep})`;
+    ctx.lineWidth = 0.3;
     ctx.stroke();
-    ctx.strokeStyle = `rgba(200,230,245,${0.12 * deep})`;
-    ctx.lineWidth = 0.05;
+    ctx.strokeStyle = `rgba(200,230,245,${0.14 * deep})`;
+    ctx.lineWidth = 0.1;
     ctx.stroke();
   }
 
@@ -1089,381 +1261,14 @@ export class Whale {
     const tile = 0.9;
     this.body.surfaceFrame(S_EYE, 0, this.f);
     // 只覆盖镜头可能看到的范围（以眼睛为中心）
-    const span = Math.min(9, (rc.h / scale) * 1.6 + 1);
+    const span = Math.min(14, (rc.h / scale) * 1.6 + 1);
     const x0 = Math.floor((this.f.x - span) / tile) * tile;
     const y0 = Math.floor((this.f.y - span * 0.6) / tile) * tile;
-    ctx.globalAlpha = 0.5 * a;
+    ctx.globalAlpha = 0.28 * a;
     for (let x = x0; x < this.f.x + span; x += tile) {
       for (let y = y0; y < this.f.y + span * 0.6; y += tile) ctx.drawImage(tex, x, y, tile, tile);
     }
-    // 柔和的顶光：皮肤上方略亮，向下渐暗
-    const g = ctx.createRadialGradient(this.f.x - 0.4, this.f.y - 1.2, 0, this.f.x - 0.4, this.f.y - 1.2, 2.6);
-    g.addColorStop(0, `rgba(200,225,240,${0.1 * a})`);
-    g.addColorStop(1, 'rgba(200,225,240,0)');
     ctx.globalAlpha = 1;
-    ctx.fillStyle = g;
-    ctx.fillRect(this.f.x - 3, this.f.y - 4, 6, 6);
-  }
-
-  private drawFluke(ctx: CanvasRenderingContext2D): void {
-    const b = this.body;
-    const n = b.n;
-    const col = this.col;
-    ctx.save();
-    // 尾叶里没有骨骼：随软组织一起逐渐消失
-    ctx.globalAlpha *= smoothstep(0.12, 0.55, this.state.tissue);
-    ctx.translate(b.px[n - 1], b.py[n - 1]);
-    // 尾鳍坐标：+x 指向身体后方
-    ctx.rotate(b.flukeAngle);
-    for (let side = 0; side < 2; side++) {
-      const far = side === 0;
-      const k = far ? this.kFar : this.kNear;
-      ctx.beginPath();
-      ctx.moveTo(-0.25, 0.1 * Math.sign(k));
-      // 前缘：向后上/后下方后掠到尖端
-      ctx.bezierCurveTo(0.3, 0.9 * k, 1.0, 2.0 * k, 1.75, 2.35 * k);
-      // 后缘：带锯齿的波浪
-      const tipX = 1.75;
-      const tipY = 2.35 * k;
-      const notchX = 0.95;
-      const steps = 7;
-      for (let i = 1; i <= steps; i++) {
-        const t = i / steps;
-        const x = lerp(tipX, notchX, t) - Math.sin(Math.PI * t) * 0.32;
-        const y = lerp(tipY, 0.02 * Math.sign(k), t);
-        const bump = i % 2 === 0 ? 0.05 : -0.02;
-        ctx.lineTo(x + bump, y);
-      }
-      ctx.lineTo(-0.15, 0);
-      ctx.closePath();
-      ctx.fillStyle = far ? col.dorsal : col.flank;
-      ctx.fill();
-      if (!far) {
-        ctx.strokeStyle = col.lowFlank;
-        ctx.globalAlpha = 0.5;
-        ctx.lineWidth = 0.04;
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-    }
-    ctx.restore();
-  }
-
-  /**
-   * 胸鳍轮廓（鳍坐标：x 从根部到尖端，负 y 为带结节的前缘）。pose 给出侧视中的长度、宽度比例，
-   * 以及远端相对根部的弯折：弯折沿鳍长平滑分布，像一片有骨骼支撑、只在中段略微顺势弯下的鳍。
-   */
-  private finPath(ctx: CanvasRenderingContext2D, pose: FinPose): void {
-    const L = FIN_LEN;
-    const n = 36;
-    const sl = pose.len;
-    const sw = pose.wid;
-    const bend = pose.bend;
-    // 弯折后的中线（按 t 积分方向角）
-    const cxs = this.finCx;
-    const cys = this.finCy;
-    const ths = this.finTh;
-    cxs[0] = 0;
-    cys[0] = 0;
-    ths[0] = 0;
-    for (let i = 1; i <= n; i++) {
-      const tm = (i - 0.5) / n;
-      const th = bend * smoothstep(0.25, 0.75, tm);
-      cxs[i] = cxs[i - 1] + (Math.cos(th) * L * sl) / n;
-      cys[i] = cys[i - 1] + (Math.sin(th) * L * sl) / n;
-      ths[i] = bend * smoothstep(0.25, 0.75, i / n);
-    }
-    // 鳍坐标中的点 (x, y) → 弯折后的位置
-    const warp = (x: number, y: number, out: { x: number; y: number }) => {
-      const t = clamp(x / L, 0, 1);
-      const fi = t * n;
-      const i = Math.min(n - 1, Math.floor(fi));
-      const fr = fi - i;
-      const th = lerp(ths[i], ths[i + 1], fr);
-      const over = (x - t * L) * sl;
-      const px = lerp(cxs[i], cxs[i + 1], fr) + Math.cos(th) * over;
-      const py = lerp(cys[i], cys[i + 1], fr) + Math.sin(th) * over;
-      const yy = y * sw;
-      out.x = px - Math.sin(th) * yy;
-      out.y = py + Math.cos(th) * yy;
-      return out;
-    };
-    const q = this.q;
-    const r = this.p;
-    ctx.beginPath();
-    warp(-0.05, -0.2, q);
-    ctx.moveTo(q.x, q.y);
-    for (let i = 0; i <= n; i++) {
-      const t = i / n;
-      const w = (0.2 + 0.16 * Math.sin(Math.PI * Math.min(1, t * 1.5))) * (1 - 0.82 * t);
-      const knob = t > 0.08 && t < 0.92 ? Math.abs(Math.sin(t * Math.PI * 10)) * 0.045 * (1 - t * 0.5) : 0;
-      warp(t * L, -w - knob, q);
-      ctx.lineTo(q.x, q.y);
-    }
-    warp(L + 0.1, 0.02, r);
-    warp(L - 0.12, 0.07, q);
-    ctx.quadraticCurveTo(r.x, r.y, q.x, q.y);
-    for (let i = n; i >= 0; i--) {
-      const t = i / n;
-      const w = 0.04 + 0.34 * Math.pow(1 - t, 1.1) + 0.06 * Math.sin(Math.PI * t);
-      warp(t * L, w, q);
-      ctx.lineTo(q.x, q.y);
-    }
-    warp(-0.2, 0.2, r);
-    warp(-0.05, -0.2, q);
-    ctx.quadraticCurveTo(r.x, r.y, q.x, q.y);
-    ctx.closePath();
-  }
-
-  private drawFin(ctx: CanvasRenderingContext2D, far: boolean): void {
-    const b = this.body;
-    const col = this.col;
-    const pose = far ? this.finFarPose : this.finPose;
-    b.point(S_FIN, far ? -0.32 : -0.5, this.p);
-    ctx.save();
-    ctx.translate(this.p.x + (far ? 0.25 : 0), this.p.y);
-    ctx.rotate(pose.a);
-    this.finPath(ctx, pose);
-    if (far) {
-      ctx.fillStyle = col.flank;
-      ctx.fill();
-    } else {
-      const Lx = FIN_LEN * pose.len;
-      const g = ctx.createLinearGradient(0, 0, Lx, 0);
-      g.addColorStop(0, col.flank);
-      g.addColorStop(0.16, col.lowFlank);
-      g.addColorStop(0.32, col.belly);
-      g.addColorStop(1, col.fin);
-      ctx.fillStyle = g;
-      ctx.fill();
-      ctx.save();
-      ctx.clip();
-      // 前缘的阴影与细小斑点
-      ctx.strokeStyle = col.finMottle;
-      ctx.globalAlpha = 0.35;
-      ctx.lineWidth = 0.09 * pose.wid;
-      ctx.beginPath();
-      const q = this.q;
-      for (let i = 0; i <= 8; i++) {
-        const t = i / 8;
-        this.finLocalPoint(pose, 0.2 + t * 4.0, lerp(-0.32, -0.02, t * t), q);
-        if (i === 0) ctx.moveTo(q.x, q.y);
-        else ctx.lineTo(q.x, q.y);
-      }
-      ctx.stroke();
-      ctx.fillStyle = col.finMottle;
-      ctx.globalAlpha = 0.3;
-      ctx.beginPath();
-      this.finLocalPoint(pose, 1.7, 0.12, q);
-      ctx.ellipse(q.x, q.y, 0.16 * pose.len, 0.06 * pose.wid, 0.1 + pose.bend * 0.3, 0, TAU);
-      this.finLocalPoint(pose, 2.5, -0.02, q);
-      ctx.moveTo(q.x + 0.09, q.y);
-      ctx.ellipse(q.x, q.y, 0.09 * pose.len, 0.04 * pose.wid, pose.bend * 0.5, 0, TAU);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      // 静卧：鳍贴着沉积物的后缘一侧略暗（与海床之间的细小遮蔽）
-      if (pose.bend > 0.02) {
-        const k = pose.bend / REST_FIN.bend;
-        ctx.strokeStyle = 'rgba(4,10,18,1)';
-        ctx.globalAlpha = 0.22 * k;
-        ctx.lineWidth = 0.22 * pose.wid;
-        ctx.beginPath();
-        for (let i = 0; i <= 8; i++) {
-          const t = 0.35 + (i / 8) * 0.6;
-          this.finLocalPoint(pose, t * FIN_LEN, 0.04 + 0.34 * Math.pow(1 - t, 1.1) + 0.06 * Math.sin(Math.PI * t), q);
-          if (i === 0) ctx.moveTo(q.x, q.y);
-          else ctx.lineTo(q.x, q.y);
-        }
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-      ctx.restore();
-      ctx.strokeStyle = col.finEdge;
-      ctx.lineWidth = 0.025;
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  /** 鳍坐标中 (x, y) 经弯折与缩放后的位置（需在 finPath 之后调用，复用其中线） */
-  private finLocalPoint(pose: FinPose, x: number, y: number, out: { x: number; y: number }): { x: number; y: number } {
-    const n = 36;
-    const t = clamp(x / FIN_LEN, 0, 1);
-    const fi = t * n;
-    const i = Math.min(n - 1, Math.floor(fi));
-    const fr = fi - i;
-    const th = lerp(this.finTh[i], this.finTh[i + 1], fr);
-    const px = lerp(this.finCx[i], this.finCx[i + 1], fr);
-    const py = lerp(this.finCy[i], this.finCy[i + 1], fr);
-    const yy = y * pose.wid;
-    out.x = px - Math.sin(th) * yy;
-    out.y = py + Math.cos(th) * yy;
-    return out;
-  }
-
-  private drawTubercles(ctx: CanvasRenderingContext2D): void {
-    const b = this.body;
-    const col = this.col;
-    ctx.fillStyle = col.tubercle;
-    // 吻部背侧的两列结节
-    for (let i = 0; i < 9; i++) {
-      const s = 0.022 + i * 0.019;
-      b.point(s, 0.93, this.p);
-      ctx.beginPath();
-      ctx.arc(this.p.x, this.p.y, 0.055, 0, TAU);
-      ctx.fill();
-      if (i % 2 === 0 && i > 0) {
-        b.point(s + 0.008, 0.62, this.p);
-        ctx.beginPath();
-        ctx.arc(this.p.x, this.p.y, 0.045, 0, TAU);
-        ctx.fill();
-      }
-    }
-    // 下颌边缘的结节与藤壶（随下颌一起转动）
-    const g = b.gapeCount;
-    const c = Math.cos(b.jawAngle);
-    const sn = Math.sin(b.jawAngle);
-    for (let i = 1; i < Math.min(g, 8); i += 1) {
-      const x = b.mlx[i] + (-sn) * 0 + sn * 0.0;
-      const y = b.mly[i];
-      const ox = -sn * 0.16;
-      const oy = c * 0.16;
-      ctx.fillStyle = col.tubercle;
-      ctx.beginPath();
-      ctx.arc(x + ox, y + oy, 0.045, 0, TAU);
-      ctx.fill();
-      if (i === 2 || i === 4) {
-        ctx.fillStyle = col.barnacle;
-        ctx.globalAlpha = 0.75;
-        ctx.beginPath();
-        ctx.arc(x + ox * 2.2, y + oy * 2.2, 0.06, 0, TAU);
-        ctx.arc(x + ox * 2.6 + 0.08, y + oy * 2.6, 0.045, 0, TAU);
-        ctx.fill();
-        ctx.globalAlpha = 1;
-      }
-    }
-  }
-
-  private drawBlowhole(ctx: CanvasRenderingContext2D): void {
-    const b = this.body;
-    b.point(S_BLOW + 0.012, 1, this.p);
-    const x = this.p.x;
-    const y = this.p.y;
-    ctx.fillStyle = this.col.flank;
-    ctx.beginPath();
-    ctx.ellipse(x + 0.2, y - 0.02, 0.32, 0.07, 0, Math.PI, TAU);
-    ctx.fill();
-    ctx.strokeStyle = this.col.socket;
-    ctx.lineWidth = 0.03;
-    ctx.beginPath();
-    ctx.moveTo(x - 0.12, y + 0.03);
-    ctx.quadraticCurveTo(x + 0.02, y - 0.03, x + 0.16, y + 0.02);
-    ctx.stroke();
-  }
-
-  private drawEye(ctx: CanvasRenderingContext2D, scale: number): void {
-    const st = this.state;
-    const b = this.body;
-    const col = this.col;
-    b.surfaceFrame(S_EYE, 0.0, this.f);
-    const ex = this.f.x;
-    const ey = this.f.y;
-    const r = 0.085;
-    const detail = scale * r; // 眼睛半径的屏幕像素
-    // 眼窝
-    ctx.fillStyle = col.socket;
-    ctx.globalAlpha = 0.55;
-    ctx.beginPath();
-    ctx.ellipse(ex, ey, r * 2.5, r * 1.75, -0.08, 0, TAU);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    if (detail > 6) {
-      // 眼周皱褶：上下各两三道不完整的弧线
-      ctx.strokeStyle = col.socket;
-      ctx.lineCap = 'round';
-      ctx.globalAlpha = clamp((detail - 6) / 20) * 0.45;
-      const arcs: Array<[number, number, number, number, number]> = [
-        [1.55, 1.15, 1.12, 1.88, 0.07],
-        [1.95, 1.4, 1.2, 1.75, 0.05],
-        [2.35, 1.6, 1.28, 1.6, 0.035],
-        [1.6, 1.05, 0.2, 0.75, 0.06],
-        [2.05, 1.3, 0.3, 0.62, 0.04],
-      ];
-      for (const [kx, ky, a0, a1, lw] of arcs) {
-        ctx.lineWidth = r * lw;
-        ctx.beginPath();
-        ctx.ellipse(ex - r * 0.12, ey + r * 0.04, r * kx, r * ky, -0.06, Math.PI * a0, Math.PI * a1);
-        ctx.stroke();
-      }
-      ctx.globalAlpha = 1;
-    }
-    // 眼球
-    ctx.save();
-    ctx.beginPath();
-    ctx.ellipse(ex, ey, r * 1.2, r * 0.88, -0.08, 0, TAU);
-    ctx.clip();
-    ctx.fillStyle = col.eyeBall;
-    ctx.fill();
-    if (detail > 4) {
-      const ig = ctx.createRadialGradient(ex + r * 0.1, ey, r * 0.1, ex, ey, r * 0.95);
-      ig.addColorStop(0, col.eyeBall);
-      ig.addColorStop(0.55, col.iris);
-      ig.addColorStop(1, col.eyeBall);
-      ctx.fillStyle = ig;
-      ctx.beginPath();
-      ctx.ellipse(ex, ey, r * 0.95, r * 0.8, 0, 0, TAU);
-      ctx.fill();
-      ctx.fillStyle = col.eyeBall;
-      ctx.beginPath();
-      ctx.ellipse(ex + r * 0.05, ey, r * 0.45, r * 0.3, 0, 0, TAU);
-      ctx.fill();
-    }
-    // 湿润的高光
-    ctx.fillStyle = 'rgba(235,245,255,0.85)';
-    ctx.beginPath();
-    ctx.ellipse(ex - r * 0.42, ey - r * 0.36, r * 0.2, r * 0.13, -0.5, 0, TAU);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(200,225,245,0.35)';
-    ctx.beginPath();
-    ctx.ellipse(ex + r * 0.45, ey + r * 0.3, r * 0.12, r * 0.07, -0.5, 0, TAU);
-    ctx.fill();
-    // 眼睑：上睑下垂、下睑微抬，在略低于中线处相合，形成平静的弧线
-    const e = clamp(st.eye);
-    const upY = lerp(ey + r * 0.22, ey - r * 1.0, e);
-    const loY = lerp(ey + r * 0.26, ey + r * 0.95, e);
-    ctx.fillStyle = col.lid;
-    ctx.beginPath();
-    ctx.moveTo(ex - r * 1.4, ey - r * 1.2);
-    ctx.lineTo(ex + r * 1.4, ey - r * 1.2);
-    ctx.lineTo(ex + r * 1.4, upY - r * 0.1);
-    ctx.quadraticCurveTo(ex, upY + r * 0.35 * (1 - e * 0.6), ex - r * 1.4, upY - r * 0.1);
-    ctx.closePath();
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(ex - r * 1.4, ey + r * 1.2);
-    ctx.lineTo(ex + r * 1.4, ey + r * 1.2);
-    ctx.lineTo(ex + r * 1.4, loY + r * 0.1);
-    ctx.quadraticCurveTo(ex, loY + r * 0.3 * e, ex - r * 1.4, loY + r * 0.1);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-    // 眼睑边缘与褶线
-    ctx.strokeStyle = col.socket;
-    ctx.lineWidth = r * 0.12;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(ex - r * 1.2, upY - r * 0.05);
-    ctx.quadraticCurveTo(ex, upY + r * 0.35 * (1 - e * 0.6), ex + r * 1.2, upY - r * 0.05);
-    ctx.stroke();
-    if (detail > 5) {
-      ctx.globalAlpha = 0.5;
-      ctx.lineWidth = r * 0.06;
-      ctx.beginPath();
-      ctx.moveTo(ex - r * 1.1, upY - r * 0.42);
-      ctx.quadraticCurveTo(ex, upY - r * 0.1 - r * 0.25 * e, ex + r * 1.15, upY - r * 0.4);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
   }
 }
 

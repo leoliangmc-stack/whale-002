@@ -3,7 +3,7 @@ import { clamp, damp, lerp, rng, sampleProfile, TAU } from '../../core/math';
 import type { RenderCtx } from '../../core/types';
 import { WORLD } from '../../config/stages';
 import type { EcoState } from '../../systems/StoryTimeline';
-import { restSpineDY, S_REF, UPPER, WHALE_LEN } from '../WhaleBody';
+import { REST_GROUND, restSpineDY, S_REF, UPPER, WHALE_LEN } from '../WhaleBody';
 
 /**
  * 深海生物的公共基类。
@@ -27,7 +27,7 @@ export interface CreatureEnv {
 
 export const SEABED = WORLD.seabedY;
 export const REST_X = WORLD.restX;
-const Y_REST = WORLD.seabedY - 1.72;
+const Y_REST = WORLD.seabedY - REST_GROUND;
 
 export abstract class Creature {
   abstract readonly info: string;
@@ -143,8 +143,8 @@ export function carcassTop(x: number, shrink = 0): number {
   return spine - up * (1 - 0.42 * shrink);
 }
 
-export const CARCASS_X0 = REST_X - (1 - S_REF) * WHALE_LEN + 0.6;
-export const CARCASS_X1 = REST_X + S_REF * WHALE_LEN - 0.3;
+export const CARCASS_X0 = REST_X - (1 - S_REF) * WHALE_LEN + 1.03;
+export const CARCASS_X1 = REST_X + S_REF * WHALE_LEN - 0.51;
 
 /** 坍塌后骨骼顶面的近似高度（用于在骨头上爬行的小动物）。 */
 export function boneTop(x: number): number {
@@ -153,10 +153,10 @@ export function boneTop(x: number): number {
   if (s < 0.3) {
     // 头骨：吻端低、颅顶高
     const t = s / 0.3;
-    return lerp(SEABED - 1.35, Y_REST - 0.62, Math.pow(t, 0.8));
+    return lerp(SEABED - 2.31, Y_REST - 1.06, Math.pow(t, 0.8));
   }
-  if (s < 0.9) return lerp(Y_REST - 0.12, SEABED - 0.32, Math.pow((s - 0.3) / 0.6, 1.6));
-  return SEABED - 0.15;
+  if (s < 0.9) return lerp(Y_REST - 0.21, SEABED - 0.55, Math.pow((s - 0.3) / 0.6, 1.6));
+  return SEABED - 0.26;
 }
 
 // ------------------------------------------------------------------ 发光精灵缓存

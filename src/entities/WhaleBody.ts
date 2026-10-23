@@ -1,74 +1,192 @@
 import { clamp, sampleProfile, smoothstep } from '../core/math';
+import { ART_EYE_S } from './WhaleArt';
 
 /**
- * 座头鲸（Megaptera novaeangliae）侧视几何模型。
+ * 蓝鲸（Balaenoptera musculus）侧视几何模型。
  *
  * 局部坐标：原点位于身体参考点（沿体长 S_REF 处的脊线），+x 指向吻端，+y 向下，单位为米。
- * 身体由一条可弯曲的“脊线”加上背侧 / 腹侧剖面构成：
+ * 身体由一条可弯曲的“脊线”加上背侧 / 腹侧剖面构成；脊线就是绘画中吻端尖到尾叶缺刻的体轴，
+ * 剖面是从绘画（entities/WhaleArt.ts）的轮廓量出来的，所以碰撞、着陆与分解都与画面一致：
  *  - 游动：尾鳍上下摆动（须鲸靠尾叶上下拍水推进）；
- *  - 滤食：下颌绕颌关节张开，喉腹褶向下鼓起；
+ *  - 滤食：下颌绕颌关节张开，喉腹褶向下鼓起（画面在游动与张嘴两张画之间过渡）；
  *  - 下沉：尾柄、尾叶与头部的被动弯曲（由下沉动作层给出，见 systems/DescentMotion.ts）；
  *  - 静卧：躯干压入海底软泥，头部微微放低，尾柄顺着重量缓缓垂向海床，身体略向镜头一侧侧倾
  *    （见 restSpineDY / restRoll）。
  * 鲸鱼骨骼使用同一条脊线定位，保证分解时骨骼与身体严格对齐。
  */
 
-export const WHALE_LEN = 14;
+/** 体长（米，吻端尖到尾叶缺刻）：一头成年的南极蓝鲸 */
+export const WHALE_LEN = 24;
 export const S_REF = 0.42;
-/** 口角（颌关节）位置 */
-export const S_GAPE = 0.26;
-/** 眼睛位置 */
-export const S_EYE = 0.282;
+/** 口角（颌关节）位置：嘴线从吻端一直延伸到眼睛下方稍后 */
+export const S_GAPE = 0.255;
+/** 眼睛位置（瞳孔，取自绘画） */
+export const S_EYE = ART_EYE_S;
 /** 胸鳍根部 */
-export const S_FIN = 0.335;
-/** 喷气孔 */
-export const S_BLOW = 0.19;
+export const S_FIN = 0.35;
+/** 喷气孔：体长的 16%，头顶的防溅脊之后 */
+export const S_BLOW = 0.16;
 
 type Profile = ReadonlyArray<readonly [number, number]>;
 
-/** 背侧剖面（脊线上方的高度，米） */
+/** 背侧剖面（脊线上方的高度，米），含很小、很靠后的背鳍（约在体长的四分之三处） */
 export const UPPER: Profile = [
-  [0, 0.16],
-  [0.015, 0.34],
-  [0.05, 0.54],
-  [0.1, 0.77],
-  [0.16, 0.98],
-  [0.22, 1.16],
-  [0.3, 1.36],
-  [0.4, 1.48],
-  [0.5, 1.44],
-  [0.58, 1.3],
-  [0.66, 1.08],
-  [0.74, 0.84],
-  [0.82, 0.6],
-  [0.88, 0.45],
-  [0.93, 0.34],
-  [0.97, 0.27],
-  [1, 0.22],
+  [0, 0.08],
+  [0.01, 0.265],
+  [0.02, 0.397],
+  [0.04, 0.558],
+  [0.06, 0.691],
+  [0.08, 0.814],
+  [0.1, 0.908],
+  [0.12, 1.05],
+  [0.14, 1.173],
+  [0.16, 1.362],
+  [0.18, 1.523],
+  [0.2, 1.589],
+  [0.22, 1.57],
+  [0.24, 1.618],
+  [0.26, 1.712],
+  [0.28, 1.816],
+  [0.3, 1.901],
+  [0.33, 1.987],
+  [0.36, 2.043],
+  [0.4, 2.129],
+  [0.44, 2.204],
+  [0.48, 2.242],
+  [0.52, 2.261],
+  [0.56, 2.251],
+  [0.6, 2.204],
+  [0.64, 2.157],
+  [0.68, 2.072],
+  [0.72, 1.987],
+  [0.74, 1.949],
+  [0.76, 1.977],
+  [0.78, 2.091],
+  [0.8, 2.176],
+  [0.81, 1.722],
+  [0.83, 1.58],
+  [0.86, 1.41],
+  [0.9, 1.239],
+  [0.93, 1.05],
+  [0.95, 0.908],
+  [0.97, 0.7],
+  [0.99, 0.445],
+  [1, 0.293],
 ];
 
-/** 腹侧剖面（脊线下方的深度，米） */
+/** 腹侧剖面（脊线下方的深度，米）：修长的身体，喉腹褶一直延伸到腹部中段；不含胸鳍 */
 export const LOWER: Profile = [
-  [0, 0.1],
-  [0.015, 0.34],
-  [0.05, 0.64],
-  [0.1, 0.98],
-  [0.16, 1.24],
-  [0.22, 1.44],
-  [0.3, 1.66],
-  [0.38, 1.75],
-  [0.46, 1.68],
-  [0.54, 1.5],
-  [0.62, 1.27],
-  [0.7, 1.0],
-  [0.78, 0.74],
-  [0.85, 0.52],
-  [0.9, 0.39],
-  [0.95, 0.3],
-  [1, 0.22],
+  [0, 0.12],
+  [0.01, 0.426],
+  [0.02, 0.624],
+  [0.04, 0.88],
+  [0.06, 1.05],
+  [0.08, 1.258],
+  [0.1, 1.447],
+  [0.12, 1.599],
+  [0.14, 1.703],
+  [0.16, 1.807],
+  [0.18, 1.883],
+  [0.2, 1.977],
+  [0.22, 2.091],
+  [0.24, 2.176],
+  [0.26, 2.251],
+  [0.28, 2.299],
+  [0.3, 2.346],
+  [0.33, 2.403],
+  [0.36, 2.422],
+  [0.4, 2.422],
+  [0.44, 2.4],
+  [0.48, 2.318],
+  [0.52, 2.242],
+  [0.56, 2.119],
+  [0.6, 1.977],
+  [0.64, 1.797],
+  [0.68, 1.674],
+  [0.72, 1.495],
+  [0.76, 1.277],
+  [0.8, 1.154],
+  [0.84, 1.126],
+  [0.88, 1.126],
+  [0.92, 1.135],
+  [0.95, 1.041],
+  [0.98, 0.937],
+  [1, 0.842],
 ];
 
-export const LOWER_MAX = 1.75;
+export const LOWER_MAX = 2.422;
+
+/**
+ * 张嘴滤食的那张画在头部的轮廓（米，脊线上方 / 下方）：吻部微微抬起，下颌落下，
+ * 喉腹褶像气球一样鼓起，一直到胸鳍前方（s ≈ 0.44 之后与游动的画相同）。
+ */
+export const LUNGE_UP: Profile = [
+  [0, 0.9],
+  [0.01, 0.98],
+  [0.02, 1.06],
+  [0.04, 1.17],
+  [0.06, 1.24],
+  [0.08, 1.3],
+  [0.1, 1.36],
+  [0.12, 1.45],
+  [0.14, 1.52],
+  [0.16, 1.65],
+  [0.18, 1.77],
+  [0.2, 1.81],
+  [0.22, 1.73],
+  [0.24, 1.72],
+  [0.26, 1.78],
+  [0.28, 1.87],
+  [0.3, 1.93],
+  [0.32, 1.99],
+  [0.34, 2.03],
+  [0.36, 2.06],
+  [0.38, 2.11],
+  [0.4, 2.14],
+  [0.42, 2.18],
+  [0.44, 2.204],
+];
+
+export const LUNGE_LO: Profile = [
+  [0, 1.7],
+  [0.01, 1.9],
+  [0.02, 2.09],
+  [0.04, 2.45],
+  [0.06, 2.74],
+  [0.08, 2.98],
+  [0.1, 3.16],
+  [0.12, 3.27],
+  [0.14, 3.32],
+  [0.16, 3.32],
+  [0.18, 3.29],
+  [0.2, 3.26],
+  [0.22, 3.22],
+  [0.24, 3.15],
+  [0.26, 3.07],
+  [0.28, 2.97],
+  [0.3, 2.87],
+  [0.32, 2.74],
+  [0.34, 2.65],
+  [0.36, 2.59],
+  [0.38, 2.51],
+  [0.4, 2.45],
+  [0.42, 2.39],
+  [0.44, 2.4],
+];
+
+/** 嘴线（闭嘴时，在脊线下方的距离，米）：从吻端尖略高于体轴向后延伸，到眼睛下方急转向下，止于口角 */
+const MOUTH: Profile = [
+  [0, 0],
+  [0.03, -0.095],
+  [0.1, -0.12],
+  [0.13, -0.18],
+  [0.17, -0.24],
+  [0.19, -0.15],
+  [0.2, -0.06],
+  [0.21, 0.1],
+  [0.23, 0.3],
+  [S_GAPE, 0.42],
+];
 
 // ------------------------------------------------------------------ 静卧姿态
 // 一头几十吨重的身体落在软泥上：最重的胸腹部压进沉积物，头部顺着重量微微放低（下颌接近海床），
@@ -76,15 +194,15 @@ export const LOWER_MAX = 1.75;
 // 所有弯曲都是平滑的长弧线，躯干保持完整的解剖轮廓，不做压扁或拉伸。
 
 /** 静卧时海床在鲸鱼局部坐标中的 y（参考点到海床的距离，米） */
-export const REST_GROUND = 1.72;
+export const REST_GROUND = 2.41;
 /** 胸腹部压入沉积物的深度（米） */
-const REST_SINK = 0.2;
+const REST_SINK = 0.34;
 /** 整体极轻的低头（每米体长的下沉量）：头骨更重，前半身压得更深 */
 const REST_TILT = 0.01;
 /** 头部在颈部附近平滑放低（米，吻端处） */
-const REST_HEAD = 0.45;
+const REST_HEAD = 0.77;
 /** 尾柄下垂（米，尾端处）：尾柄像一道低矮的拱，下方留出逐渐变窄的缝隙，尾叶落在海床上 */
-const REST_TAIL = 1.42;
+const REST_TAIL = 1.4;
 /** 身体向镜头一侧的侧倾（弧度）：近侧着地，背部稍稍转向镜头 */
 export const REST_ROLL = 0.2;
 
@@ -123,18 +241,18 @@ export function rollV(v: number, rho: number): number {
   return Math.sin(Math.asin(clamp(v, -1, 1)) - rho);
 }
 
-/** 背鳍：前缘缓升、后缘陡降的小镰刀形 */
-function dorsalFin(s: number): number {
-  if (s < 0.6 || s > 0.7) return 0;
-  if (s < 0.668) return 0.3 * Math.pow((s - 0.6) / 0.068, 1.6);
-  return 0.3 * Math.pow(1 - (s - 0.668) / 0.032, 0.7);
+/** 嘴线：在脊线下方的距离（米） */
+export function mouthY(s: number): number {
+  return sampleProfile(MOUTH, clamp(s, 0, S_GAPE));
 }
 
-/** 嘴线：在脊线下方的距离（米），从吻端微微拱起后落向口角 */
-export function mouthY(s: number): number {
-  const t = clamp(s / S_GAPE);
-  return 0.06 + 0.2 * t - 0.16 * Math.sin(Math.PI * t);
-}
+/**
+ * 滤食时下颌张开的最大角度（弧度，上下颌张角接近 90°）与喉腹褶鼓起的最大幅度（米）、范围。
+ * 这里只给出近似的下缘轮廓与嘴唇线；画面上的张嘴见 Whale.drawLunge。
+ */
+const JAW_MAX = 1.3;
+const THROAT_MAX = 1.35;
+const THROAT_END = 0.44;
 
 export interface WhaleShape {
   /** 尾鳍摆动幅度 0~1（氛围时钟驱动的主动游动） */
@@ -222,10 +340,10 @@ export class WhaleBody {
   static beatDY(s: number, amp: number, ph: number): number {
     if (amp === 0) return 0;
     const env = 0.04 + 0.96 * Math.pow(smoothstep(0.32, 1, s), 1.5);
-    let dy = 0.62 * amp * env * Math.sin(ph - Math.PI * 2 * 0.72 * s);
-    dy -= 0.07 * amp * Math.sin(ph + 0.7) * (1 - smoothstep(0, 0.45, s));
+    let dy = 1.06 * amp * env * Math.sin(ph - Math.PI * 2 * 0.72 * s);
+    dy -= 0.12 * amp * Math.sin(ph + 0.7) * (1 - smoothstep(0, 0.45, s));
     // 惯性：每次拍尾后，整个身体随之轻微起伏（滞后于尾叶），并带有很小的俯仰
-    dy += amp * (0.09 * Math.sin(ph - 1.3) + 0.035 * Math.sin(ph - 0.9) * (s - S_REF) * 2.2);
+    dy += amp * (0.15 * Math.sin(ph - 1.3) + 0.13 * Math.sin(ph - 0.9) * (s - S_REF));
     return dy;
   }
 
@@ -292,7 +410,7 @@ export class WhaleBody {
     const shrinkU = sh.shrink;
     for (let i = 0; i < n; i++) {
       const si = s[i];
-      let u = sampleProfile(UPPER, si) + dorsalFin(si);
+      let u = sampleProfile(UPPER, si);
       let l = sampleProfile(LOWER, si);
       this.lo0[i] = l;
       if (shrinkU > 0) {
@@ -306,7 +424,7 @@ export class WhaleBody {
     }
 
     // 颌关节与张嘴
-    const jaw = sh.mouth * 0.74;
+    const jaw = sh.mouth * JAW_MAX;
     this.jawAngle = jaw;
     const gi = this.indexAt(S_GAPE);
     const gm = this.rolledOff(gi, -mouthY(S_GAPE));
@@ -323,8 +441,8 @@ export class WhaleBody {
       let byv = py[i] - ny[i] * lo[i];
       let dnx = -nx[i];
       let dny = -ny[i];
-      if (jaw > 0 && si < 0.56) {
-        const w = si <= S_GAPE ? 1 : 1 - smoothstep(S_GAPE, 0.52, si);
+      if (jaw > 0 && si < 0.45) {
+        const w = si <= S_GAPE ? 1 : 1 - smoothstep(S_GAPE, 0.42, si);
         const a = jaw * w;
         const c = Math.cos(a);
         const sn = Math.sin(a);
@@ -337,9 +455,9 @@ export class WhaleBody {
         dnx = ndx;
         dny = ndy;
       }
-      if (sh.throat > 0 && si > 0.03 && si < 0.58) {
-        const t = (si - 0.03) / (0.58 - 0.03);
-        const infl = sh.throat * 2.05 * Math.pow(Math.sin(Math.PI * t), 0.85) * (0.75 + 0.25 * t);
+      if (sh.throat > 0 && si > 0.03 && si < THROAT_END) {
+        const t = (si - 0.03) / (THROAT_END - 0.03);
+        const infl = sh.throat * THROAT_MAX * Math.pow(Math.sin(Math.PI * t), 0.85) * (0.75 + 0.25 * t);
         bxv += dnx * infl;
         byv += dny * infl;
       }
@@ -370,13 +488,8 @@ export class WhaleBody {
     const tA = n - 3;
     this.tailAngle = Math.atan2(py[n - 1] - py[tA], px[n - 1] - px[tA]);
     const lead = 0.55 * (sh.swim * Math.cos(sh.phase - Math.PI * 2 * 0.72) + sh.beat * Math.cos(sh.beatPh - Math.PI * 2 * 0.72));
+    // 静卧时尾叶如何落在海床上由 Whale 按画中尾叶的形状约束（见 Whale.flukeFor）
     this.flukeAngle = this.tailAngle - lead + sh.fluke;
-    // 静卧：尾叶在尾柄末端的关节处顺势放平，松弛地贴着海床，后缘略微下垂
-    if (sh.rest > 0) {
-      const k = smoothstep(0.3, 0.95, sh.rest);
-      const flat = Math.atan2(Math.sin(Math.PI - this.flukeAngle), Math.cos(Math.PI - this.flukeAngle));
-      this.flukeAngle += k * (0.75 * flat - 0.05);
-    }
   }
 
   indexAt(sv: number): number {

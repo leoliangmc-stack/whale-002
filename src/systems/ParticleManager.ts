@@ -129,8 +129,8 @@ export class ParticleManager {
         wcy = P.y;
         ax = Math.cos(wk.pitch);
         ay = Math.sin(wk.pitch);
-        ea = 7.6 * P.s;
-        eb = 2.3 * P.s;
+        ea = 13 * P.s;
+        eb = 3.9 * P.s;
         mvx = wk.vx / sp;
         mvy = wk.vy / sp;
         // 位移约等于身体在 0.4 秒内移过的距离，并且不超过身体半高的一部分
@@ -216,26 +216,26 @@ export class ParticleManager {
       if (tau <= 0) continue;
       const side = h(4) < 0.5 ? -1 : 1;
       if (behind !== side > 0) continue;
-      const half = tail ? 0.35 : 0.9 + 0.4 * Math.sin(Math.PI * Math.min(1, (sv - 0.1) / 0.55));
+      const half = tail ? 0.6 : 1.55 + 0.7 * Math.sin(Math.PI * Math.min(1, (sv - 0.1) / 0.55));
       // 向外的初速度很快被水阻耗尽（τ≈1.8 s）；身体两端的颗粒也向前 / 向后流出一些
-      const v = (tail ? 0.35 : 0.45) + h(5) * 0.6;
+      const v = (tail ? 0.6 : 0.77) + h(5) * 1.0;
       const ends = sv < 0.2 ? 0.7 : tail ? -0.6 : 0;
       const dirX = (h(6) - 0.5) * 0.9 + ends;
       const dirZ = side * (0.7 + 0.3 * h(7));
       const e = 1 - Math.exp(-tau / 1.8);
-      const reach = v * 1.8 * e + 0.06 * tau;
-      const x0 = x + WHALE_LEN * (S_REF - sv) + (h(8) - 0.5) * 0.4;
-      const px = x0 + dirX * reach + Math.sin(tau * 0.31 + i) * 0.04 * tau;
+      const reach = v * 1.8 * e + 0.1 * tau;
+      const x0 = x + WHALE_LEN * (S_REF - sv) + (h(8) - 0.5) * 0.7;
+      const px = x0 + dirX * reach + Math.sin(tau * 0.31 + i) * 0.07 * tau;
       const pz = side * half + dirZ * reach;
-      // 贴着海床：只升起几十厘米，随后缓慢沉降
-      const rise = (0.2 + 0.85 * h(9) * h(9)) * (1 - Math.exp(-tau / 1.1));
-      const fall = 0.03 * Math.pow(Math.max(0, tau - 2.5), 1.25);
+      // 贴着海床：只升起不到一米半，随后缓慢沉降
+      const rise = (0.34 + 1.4 * h(9) * h(9)) * (1 - Math.exp(-tau / 1.1));
+      const fall = 0.05 * Math.pow(Math.max(0, tau - 2.5), 1.25);
       const py = Math.min(seabedY - 0.06, seabedY - 0.08 - rise + fall);
       if (!cam.project(px, py, pz, P)) continue;
-      const size = (0.35 + 0.4 * h(10) + 0.5 * (1 - Math.exp(-tau / 4))) * P.s;
+      const size = (0.5 + 0.55 * h(10) + 0.7 * (1 - Math.exp(-tau / 4))) * P.s;
       const a =
         (tail ? 0.13 : 0.19) * smoothstep(0, 0.6, tau) * (1 - smoothstep(4, 11 - 2.5 * h(3), tau)) * (0.45 + 0.55 * h(11)) *
-        (1 - 0.5 * smoothstep(0.6, 1.4, rise + 0.08 - fall));
+        (1 - 0.5 * smoothstep(1, 2.4, rise + 0.08 - fall));
       if (a < 0.006 || size < 0.5) continue;
       ctx.globalAlpha = a;
       ctx.drawImage(tex, P.x - size, P.y - size * 0.55, size * 2, size * 1.1);
@@ -261,22 +261,23 @@ export class ParticleManager {
       const r1 = hash1(i * 9 + 11);
       const r2 = hash1(i * 9 + 12);
       const r3 = hash1(i * 9 + 13);
-      const tau0 = r1 * 0.6;
+      // 持续约一秒的喷射：先喷出的冲得最高，整根水柱从海面一直连到顶端
+      const tau0 = r1 * 1.1;
       const t = T - tau0;
       if (t <= 0) continue;
-      // 座头鲸的喷气：浓密的“灌木状”水雾柱，约 3~4 米高
-      const v0 = 6.5 + r2 * 4.5;
-      const td = 0.48;
+      // 蓝鲸的喷气：又高又细的水雾柱，可达 9 米，顶端才散开
+      const v0 = 3.5 + (1 - r1 * 0.6) * r2 * 11;
+      const td = 0.7;
       const e = 1 - Math.exp(-t / td);
       const rise = v0 * td * e;
-      const spread = (r3 - 0.5) * (0.25 + rise * 0.32);
+      const spread = (r3 - 0.5) * (0.2 + rise * 0.1 + Math.max(0, rise - 5) * 0.12);
       const wind = 0.55 * Math.max(0, t - 0.4);
       const x = ox + spread + wind + Math.sin(t * 1.3 + i) * 0.08 * t;
       const y = oy - rise + 0.06 * t * t;
       const z = oz + (r1 - 0.5) * 0.8;
       if (!cam.project(x, y, z, P)) continue;
-      const size = (0.12 + rise * 0.1 + t * 0.22) * P.s;
-      const a = 0.42 * smoothstep(0, 0.1, t) * (1 - smoothstep(1.0 + r3 * 0.8, 3.6 + r1 * 1.4, t)) * sun;
+      const size = (0.12 + rise * 0.06 + t * 0.2) * P.s;
+      const a = 0.42 * smoothstep(0, 0.1, t) * (1 - smoothstep(1.5 + r3 * 0.8, 3.9 + r1 * 1.4, t)) * sun;
       if (a < 0.01) continue;
       ctx.globalAlpha = a;
       const tex = mists[i % 3];
@@ -288,21 +289,21 @@ export class ParticleManager {
       const r1 = hash1(i * 13 + 3);
       const r2 = hash1(i * 13 + 4);
       const t = T - r1 * 0.4;
-      if (t <= 0 || t > 1.8) continue;
-      const v0 = 5 + r2 * 4;
+      if (t <= 0 || t > 2.6) continue;
+      const v0 = 8 + r2 * 5;
       const x = ox + (r1 - 0.5) * 1.6 * t + 0.4 * t;
       const y = oy - v0 * t + 4.9 * t * t;
       if (y > oy + 0.2) continue;
       if (!cam.project(x, y, oz, P)) continue;
       const s = Math.max(0.8, 0.03 * P.s);
-      ctx.globalAlpha = 0.5 * (1 - t / 1.8);
+      ctx.globalAlpha = 0.5 * (1 - t / 2.6);
       ctx.drawImage(dot, P.x - s, P.y - s, s * 2, s * 2);
     }
     ctx.globalCompositeOperation = 'source-over';
     // 阳光下水雾里淡淡的彩虹
     const ra = 0.055 * smoothstep(0.9, 1.6, T) * (1 - smoothstep(3.0, 4.6, T));
-    if (ra > 0.005 && cam.project(ox + 0.6 + T * 0.4, oy - 1.6, oz - 0.5, P)) {
-      const R = 1.7 * P.s;
+    if (ra > 0.005 && cam.project(ox + 0.8 + T * 0.4, oy - 3.4, oz - 0.5, P)) {
+      const R = 2.8 * P.s;
       const cols = ['255,80,80', '255,170,60', '255,240,90', '90,220,120', '90,160,255', '160,110,255'];
       ctx.lineWidth = Math.max(1, R * 0.045);
       for (let k = 0; k < cols.length; k++) {

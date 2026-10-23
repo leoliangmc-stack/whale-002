@@ -16,7 +16,7 @@ export interface ExploreHit {
  * 生态演替由 EcologyManager 的生态时钟推进（可暂停 / 加速）。
  */
 export class ExploreScene {
-  readonly overview = { x: WORLD.restX - 1.5, y: WORLD.seabedY - 4.2, frameH: 23 };
+  readonly overview = { x: WORLD.restX - 2.57, y: WORLD.seabedY - 7.2, frameH: 39.4 };
   private readonly fakeKrill = { visible: 0, x: 0, y: 0, z: 0, rx: 1, ry: 1, rz: 1, heading: 0, agg: 1, feed: 0, scatter: 0, deep: 0, stray: 0, sx: 0, sy: 0, sz: 0 };
 
   constructor(
@@ -30,7 +30,7 @@ export class ExploreScene {
   }
 
   overviewFor(portrait: boolean): { x: number; y: number; frameH: number } {
-    return portrait ? { x: this.overview.x, y: this.overview.y - 3, frameH: 36 } : { ...this.overview };
+    return portrait ? { x: this.overview.x, y: this.overview.y - 5.14, frameH: 61.7 } : { ...this.overview };
   }
 
   update(rc: RenderCtx, dt: number): number {
@@ -71,8 +71,8 @@ export class ExploreScene {
   }
 
   zoomLevel(frameH: number): ZoomLevel {
-    if (frameH > 22) return '广角';
-    if (frameH > 7) return '中景';
+    if (frameH > 37.7) return '广角';
+    if (frameH > 12) return '中景';
     if (frameH > 1.8) return '近景';
     return '微观';
   }
@@ -92,7 +92,7 @@ export class ExploreScene {
     // 空旷的水中：介绍漂浮的“海洋雪”
     const P = { x: 0, y: 0 };
     rc.cam.unproject(sx, sy, 0, P);
-    if (P.y < WORLD.seabedY - 3) return { info: 'marineSnow', target: null };
+    if (P.y < WORLD.seabedY - 5.1) return { info: 'marineSnow', target: null };
     return null;
   }
 }

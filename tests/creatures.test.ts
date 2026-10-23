@@ -52,7 +52,7 @@ describe('CreatureManager', () => {
   it('every creature info key used by the roster has a card', () => {
     const m = new CreatureManager() as unknown as { all: Array<{ info: string }> };
     for (const c of m.all) expect(CREATURE_INFO[c.info], c.info).toBeTruthy();
-    for (const k of ['humpback', 'krill', 'skull', 'mandible', 'vertebra', 'rib', 'flipper', 'pelvis', 'osedax', 'mat', 'rock', 'marineSnow']) {
+    for (const k of ['blueWhale', 'krill', 'skull', 'mandible', 'vertebra', 'rib', 'flipper', 'pelvis', 'osedax', 'mat', 'rock', 'marineSnow']) {
       expect(CREATURE_INFO[k], k).toBeTruthy();
     }
   });

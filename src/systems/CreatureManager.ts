@@ -55,11 +55,11 @@ interface NearestDist {
 }
 
 const P: Projected = { x: 0, y: 0, s: 0 };
-const MID_CULL = 100;
+const MID_CULL = 171;
 /** 相遇的生物在水体参照系中的最小间隔（米）：越深越稀疏 */
-const ENCOUNTER_GAP = (wy: number) => 9 + 5 * smoothstep(25, 55, wy);
+const ENCOUNTER_GAP = (wy: number) => 15.4 + 8.6 * smoothstep(42.9, 94.3, wy);
 /** 第一次相遇至少在鲸鱼开始下沉的位置以下这么远（米），停止游动与失去平衡时画面里只有鲸鱼 */
-const ENCOUNTER_CLEAR = 12;
+const ENCOUNTER_CLEAR = 20.6;
 /** 中层生物只在光线明显变暗之后才从幽暗中显现（进度） */
 const EMERGE: readonly [number, number] = [0.35, 0.362];
 
@@ -114,80 +114,81 @@ export class CreatureManager {
     let seed = 1;
 
     // ---------------- 中层水域
-    list.push(new FishSchool(seed++, n(46), -8, 52, 60, 26, 0.3));
-    list.push(new FishSchool(seed++, n(40), 26, 34, 12, 16));
-    list.push(new FishSchool(seed++, n(50), 32, 112, 5, 20));
+    // 开场的鱼群：随开场构图绕锚点 (0, 60) 放大；第二群略深一些，不进入海面呼吸的镜头
+    list.push(new FishSchool(seed++, n(46), -13.7, 46.3, 102.9, 44.6, 0.3));
+    list.push(new FishSchool(seed++, n(40), 44.6, 26, 20.6, 27.4));
+    list.push(new FishSchool(seed++, n(50), 54.9, 149.1, 8.6, 34.3));
     const lanternY = [280, 430, 560, 700, 840];
-    // 分布在下沉路线（x≈30）附近、从近景到远景的不同深度，部分会从镜头前经过
-    const midX = () => 30 + (r() - 0.5) * 24;
-    const midZ = () => -14 + r() * 28;
+    // 分布在下沉路线（x≈51）附近、从近景到远景的不同深度，部分会从镜头前经过
+    const midX = () => X + (r() - 0.5) * 41.1;
+    const midZ = () => -24 + r() * 48;
     lanternY.forEach((y) => list.push(new LanternfishGroup(seed++, n(9), midX(), y, midZ())));
     [220, 380, 520, 650, 800, 950].forEach((y) => list.push(new CombJelly(seed++, midX(), y, midZ())));
     [640, 880, 1100, 1350, 1560].forEach((y) => list.push(new Atolla(seed++, midX(), y, midZ())));
-    [760, 1000, 1250].forEach((y) => list.push(new Siphonophore(seed++, midX(), y, 2 + r() * 14, 4 + r() * 2)));
+    [760, 1000, 1250].forEach((y) => list.push(new Siphonophore(seed++, midX(), y, 3.4 + r() * 24, 4 + r() * 2)));
     // “特写”个体：在下沉/上升途中从镜头前近距离经过
-    const nearX = () => 30 + (r() - 0.5) * 9;
-    list.push(new CombJelly(seed++, nearX(), 330, -19));
-    list.push(new LanternfishGroup(seed++, n(7), nearX(), 610, -17));
-    list.push(new Atolla(seed++, nearX(), 1020, -20));
-    list.push(new Siphonophore(seed++, nearX(), 1300, -13, 5));
-    list.push(new Atolla(seed++, nearX(), 1480, -18));
+    const nearX = () => X + (r() - 0.5) * 15.4;
+    list.push(new CombJelly(seed++, nearX(), 330, -32.6));
+    list.push(new LanternfishGroup(seed++, n(7), nearX(), 610, -29.1));
+    list.push(new Atolla(seed++, nearX(), 1020, -34.3));
+    list.push(new Siphonophore(seed++, nearX(), 1300, -22.3, 5));
+    list.push(new Atolla(seed++, nearX(), 1480, -30.9));
 
     // ---------------- 鲸落周边
-    list.push(new Atolla(seed++, X - 10, S - 9, 6, true));
-    list.push(new Atolla(seed++, X + 12, S - 13, 12, true));
-    list.push(new Dumbo(seed++, X - 15, S - 4, 9));
-    list.push(new Dumbo(seed++, X + 19, S - 6, 16));
+    list.push(new Atolla(seed++, X - 17.1, S - 15.4, 10.3, true));
+    list.push(new Atolla(seed++, X + 20.6, S - 22.3, 20.6, true));
+    list.push(new Dumbo(seed++, X - 25.7, S - 6.9, 15.4));
+    list.push(new Dumbo(seed++, X + 32.6, S - 10.3, 27.4));
 
     const hag = n(12);
     for (let i = 0; i < hag; i++) list.push(new Hagfish(seed++, ((i + 0.5) / hag) * 0.9));
     list.push(new SleeperShark(seed++));
-    list.push(new Grenadier(seed++, 0.05, X - 7, -2.5));
-    list.push(new Grenadier(seed++, 0.3, X + 10, 9));
-    list.push(new Grenadier(seed++, 0.6, X - 15, -3.5));
+    list.push(new Grenadier(seed++, 0.05, X - 12, -4.3));
+    list.push(new Grenadier(seed++, 0.3, X + 17.1, 15.4));
+    list.push(new Grenadier(seed++, 0.6, X - 25.7, -6));
     list.push(new AmphipodSwarm(seed++, n(300)));
 
-    const crabX = [-11, -5, 3, 8, 13, -15];
-    const crabZ = [-1.5, -2.5, -1.2, -3, 9, 10];
+    const crabX = [-18.9, -8.6, 5.1, 13.7, 22.3, -25.7];
+    const crabZ = [-2.6, -4.3, -2.1, -5.1, 15.4, 17.1];
     const crabs = n(6);
     for (let i = 0; i < crabs; i++) list.push(new Crab(seed++, 0.05 + (i / crabs) * 0.8, X + crabX[i % 6], crabZ[i % 6]));
 
     const worms = n(22);
     for (let i = 0; i < worms; i++) {
-      const x = X - 12 + r() * 22;
-      let z = -4 + r() * 10;
-      if (z > 0.3 && Math.abs(x - X) < 9) z = -0.3 - r() * 3.5;
+      const x = X - 20.6 + r() * 37.7;
+      let z = -6.9 + r() * 17.1;
+      if (z > 0.5 && Math.abs(x - X) < 15.4) z = -0.5 - r() * 6;
       list.push(new Polychaete(seed++, (i / worms) * 0.85, x, z));
     }
     const clams = n(10);
     for (let i = 0; i < clams; i++) {
       const behind = i % 4 === 3;
-      list.push(new ClamCluster(seed++, (i / clams) * 0.6, X - 10 + r() * 18, behind ? 8 + r() * 1.5 : -0.7 - r() * 1.8));
+      list.push(new ClamCluster(seed++, (i / clams) * 0.6, X - 17.1 + r() * 30.9, behind ? 13.7 + r() * 2.6 : -1.2 - r() * 3.1));
     }
     const snails = n(8);
     for (let i = 0; i < snails; i++) {
       if (i < Math.ceil(snails * 0.6)) {
-        const x0 = X - 7 + r() * 9;
+        const x0 = X - 12 + r() * 15.4;
         list.push(new Snail(seed++, 0, x0, x0 + 0.8 + r() * 1.5, -0.35, true));
       } else {
-        const x0 = X - 9 + r() * 16;
-        list.push(new Snail(seed++, 0, x0, x0 + 1.2, -1 - r(), false));
+        const x0 = X - 15.4 + r() * 27.4;
+        list.push(new Snail(seed++, 0, x0, x0 + 1.2, -1.7 - r() * 1.7, false));
       }
     }
     const squats = n(7);
     for (let i = 0; i < squats; i++) {
       const onBone = i < Math.ceil(squats * 0.6);
-      list.push(new SquatLobster(seed++, 0, onBone ? X - 6 + r() * 10 : X - 9 + r() * 17, onBone ? -0.4 : -1.2 - r(), onBone));
+      list.push(new SquatLobster(seed++, 0, onBone ? X - 10.3 + r() * 17.1 : X - 15.4 + r() * 29.1, onBone ? -0.4 : -2.1 - r() * 1.7, onBone));
     }
     const pigs = n(4);
     for (let i = 0; i < pigs; i++) {
       const side = i % 2 ? 1 : -1;
-      list.push(new SeaPig(seed++, (i / pigs) * 0.7, X + side * (10 + r() * 8), i % 3 === 2 ? 10 + r() * 2 : -3 - r() * 2));
+      list.push(new SeaPig(seed++, (i / pigs) * 0.7, X + side * (17.1 + r() * 13.7), i % 3 === 2 ? 17.1 + r() * 3.4 : -5.1 - r() * 3.4));
     }
     const stars = n(8);
     for (let i = 0; i < stars; i++) {
       const side = i % 2 ? 1 : -1;
-      list.push(new BrittleStar(seed++, (i / stars) * 0.8, X + side * (4 + r() * 12), i % 3 === 0 ? 8 + r() * 3 : -1 - r() * 4));
+      list.push(new BrittleStar(seed++, (i / stars) * 0.8, X + side * (6.9 + r() * 20.6), i % 3 === 0 ? 13.7 + r() * 5.1 : -1.7 - r() * 6.9));
     }
 
     // ---------------- 隐藏发现（只在自由探索出现）

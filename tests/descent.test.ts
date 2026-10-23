@@ -31,7 +31,7 @@ function first(p0: number, p1: number, f: (p: number) => boolean): number {
 }
 
 const pStop = first(0.3, DESCENT_END, (p) => whale(p).beat < 0.02);
-const pSink = first(0.3, DESCENT_END, (p) => flow(p).flowY > 0.3);
+const pSink = first(0.3, DESCENT_END, (p) => flow(p).flowY > 0.51);
 
 describe('descent A: stops swimming before it sinks', () => {
   it('the last tail strokes fade in amplitude and slow in frequency', () => {
@@ -51,7 +51,7 @@ describe('descent A: stops swimming before it sinks', () => {
 
   it('stopping and sinking never happen in the same moment', () => {
     expect(pStop).toBeGreaterThan(0.3);
-    expect(flow(pStop).flowY).toBeLessThan(0.1);
+    expect(flow(pStop).flowY).toBeLessThan(0.17);
     // 摆动停止后至少 4 秒才开始明显下沉
     expect(secondsAt(pSink) - secondsAt(pStop)).toBeGreaterThan(4);
   });
@@ -59,7 +59,7 @@ describe('descent A: stops swimming before it sinks', () => {
   it('keeps gliding forward on its own inertia and stays nearly level', () => {
     const t = secondsAt(pStop);
     const later = sweep(pStop, 0.34).find((s) => s.t >= t + 3)!.p;
-    expect(whale(later).x - whale(0.304).x).toBeGreaterThan(1);
+    expect(whale(later).x - whale(0.304).x).toBeGreaterThan(1.7);
     expect(Math.abs(whale(pStop).pitch)).toBeLessThan(0.03);
   });
 });
@@ -73,17 +73,17 @@ describe('descent B: slowly loses its balance', () => {
     const p0 = first(0.315, 0.4, (p) => whale(p).pitch > 0.005);
     const s0 = snout(p0);
     const t0 = tail(p0);
-    // 头部先沉下 1 米：尾部几乎还在原来的高度
-    const p1 = first(p0, 0.4, (p) => snout(p) - s0 > 1);
-    expect(Math.abs(tail(p1) - t0)).toBeLessThan(0.3);
+    // 头部先沉下 1.7 米：尾部几乎还在原来的高度
+    const p1 = first(p0, 0.4, (p) => snout(p) - s0 > 1.7);
+    expect(Math.abs(tail(p1) - t0)).toBeLessThan(0.5);
     // 这一步是缓慢的（数秒），而不是一下子翻过去
     expect(secondsAt(p1) - secondsAt(p0)).toBeGreaterThan(3);
     // 低头先于明显的下沉
     expect(p1).toBeLessThan(pSink + 0.002);
     // 随后整个身体跟随下沉
     const p2 = sweep(p1, 0.4).find((x) => x.t >= secondsAt(p1) + 5)!.p;
-    expect(tail(p2) - t0).toBeGreaterThan(1);
-    expect(snout(p2) - tail(p2)).toBeGreaterThan(snout(p0) - tail(p0) + 1);
+    expect(tail(p2) - t0).toBeGreaterThan(1.7);
+    expect(snout(p2) - tail(p2)).toBeGreaterThan(snout(p0) - tail(p0) + 1.7);
   });
 });
 
@@ -99,10 +99,10 @@ describe('descent C/D: steady, heavy sinking', () => {
       amax = Math.max(amax, Math.abs(b - a) / (samples[i].t - samples[i - 1].t));
       vmax = Math.max(vmax, b);
     }
-    expect(flow(0.322).flowY).toBeLessThan(0.1);
-    expect(amax).toBeLessThan(0.3);
-    expect(vmax).toBeGreaterThan(1.5);
-    expect(vmax).toBeLessThan(2.5);
+    expect(flow(0.322).flowY).toBeLessThan(0.17);
+    expect(amax).toBeLessThan(0.51);
+    expect(vmax).toBeGreaterThan(2.6);
+    expect(vmax).toBeLessThan(4.3);
     // 不会一直加速：深海段的速度不超过稳定段
     expect(flow(0.44).flowY).toBeLessThanOrEqual(flow(0.38).flowY + 1e-6);
   });
@@ -116,8 +116,8 @@ describe('descent C/D: steady, heavy sinking', () => {
       const prev = whale(samples[i - 1].p);
       expect(Math.abs(w.pitch)).toBeLessThan(0.22);
       expect(Math.abs(w.pitch - prev.pitch) / (samples[i].t - samples[i - 1].t)).toBeLessThan(0.035);
-      expect(Math.abs(w.flex)).toBeLessThan(0.35);
-      expect(Math.abs(w.nod)).toBeLessThan(0.06);
+      expect(Math.abs(w.flex)).toBeLessThan(0.6);
+      expect(Math.abs(w.nod)).toBeLessThan(0.1);
       expect(Math.abs(w.fluke)).toBeLessThan(0.25);
       for (const f of [w.finN, w.finF]) {
         expect(f).toBeGreaterThan(-0.15);
@@ -152,7 +152,7 @@ describe('descent C/D: steady, heavy sinking', () => {
       return hi - lo;
     };
     expect(range('finN', 0.4, 0.44)).toBeGreaterThan(0.03);
-    expect(range('flex', 0.4, 0.44)).toBeGreaterThan(0.01);
+    expect(range('flex', 0.4, 0.44)).toBeGreaterThan(0.017);
   });
 });
 
@@ -163,7 +163,7 @@ describe('descent: landing and hand-offs', () => {
       return w.y + lowestBelow(w.pitch) >= WORLD.seabedY - 0.02;
     });
     expect(Math.abs(touch - CONTACT_P)).toBeLessThan(0.004);
-    expect(flow(touch - 0.002).flowY).toBeLessThan(0.45);
+    expect(flow(touch - 0.002).flowY).toBeLessThan(0.77);
     const end = whale(DESCENT_END);
     expect(end.x).toBeCloseTo(WORLD.restX, 4);
     expect(end.y).toBeCloseTo(Y_REST, 4);
@@ -180,7 +180,7 @@ describe('descent: landing and hand-offs', () => {
       const h = 2e-3;
       const vel = (k: 'x' | 'y' | 'pitch', p0: number, p1: number) => (whale(p1)[k] - whale(p0)[k]) / (secondsAt(p1) - secondsAt(p0));
       for (const k of ['x', 'y', 'pitch'] as const) {
-        expect(Math.abs(vel(k, p - h, p) - vel(k, p, p + h)), `velocity ${k}@${p}`).toBeLessThan(0.08);
+        expect(Math.abs(vel(k, p - h, p) - vel(k, p, p + h)), `velocity ${k}@${p}`).toBeLessThan(0.14);
       }
     }
   });
@@ -190,8 +190,8 @@ describe('descent: landing and hand-offs', () => {
     let pl = { x: prev.lagX, y: prev.lagY };
     for (let p = DESCENT_START; p <= DESCENT_END; p += 1e-4) {
       const c = tl.evaluate(p, 0).cam;
-      expect(Math.hypot(c.lagX, c.lagY)).toBeLessThan(1.5);
-      expect(Math.hypot(c.lagX - pl.x, c.lagY - pl.y)).toBeLessThan(0.05);
+      expect(Math.hypot(c.lagX, c.lagY)).toBeLessThan(2.6);
+      expect(Math.hypot(c.lagX - pl.x, c.lagY - pl.y)).toBeLessThan(0.086);
       pl = { x: c.lagX, y: c.lagY };
       prev = c;
     }
@@ -202,7 +202,7 @@ describe('descent: water frame (depth compression)', () => {
   it('compression only happens away from the surface and finishes before touchdown', () => {
     const hidden = (p: number) => d.sample(p, {} as never).hidden;
     expect(hidden(0.33)).toBeLessThan(0.05);
-    expect(whale(first(0.3, 0.45, (p) => hidden(p) > 1)).y).toBeGreaterThan(10);
+    expect(whale(first(0.3, 0.45, (p) => hidden(p) > 1.7)).y).toBeGreaterThan(17);
     expect(hidden(CONTACT_P - 0.01)).toBeCloseTo(hidden(DESCENT_END), 6);
     // 真实深度仍然到达海床
     expect(whale(0.4).y).toBeGreaterThan(900);
@@ -217,8 +217,8 @@ describe('descent: water frame (depth compression)', () => {
     // 显现前，海床与鲸鱼的距离只按可见下沉缩短
     d.seabedShift(0.45, o);
     const gap = WORLD.seabedY + o.y - whale(0.45).y;
-    expect(gap).toBeLessThan(40);
-    expect(gap).toBeGreaterThan(15);
+    expect(gap).toBeLessThan(69);
+    expect(gap).toBeGreaterThan(26);
   });
 
   it('a creature met on the way is at its nominal depth when the whale passes it', () => {
@@ -227,7 +227,7 @@ describe('descent: water frame (depth compression)', () => {
     const pPass = first(0.33, 0.47, (p) => whale(p).y >= 760);
     const o = { x: 0, y: 0 };
     d.shiftFor(a, pPass, o);
-    expect(Math.abs(760 + o.y - whale(pPass).y)).toBeLessThan(1);
+    expect(Math.abs(760 + o.y - whale(pPass).y)).toBeLessThan(1.7);
     // 下沉动作之外不偏移
     d.shiftFor(a, 0.85, o);
     expect(o.y).toBe(0);

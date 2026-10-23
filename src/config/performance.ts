@@ -13,7 +13,6 @@ export interface QualitySettings {
   bubbles: number;
   seabedDetail: number;
   creatureDensity: number;
-  vertebrae: number;
   softGlow: boolean;
 }
 
@@ -31,7 +30,6 @@ export const QUALITY: Record<0 | 1 | 2, QualitySettings> = {
     bubbles: 30,
     seabedDetail: 0.45,
     creatureDensity: 0.55,
-    vertebrae: 38,
     softGlow: false,
   },
   1: {
@@ -47,7 +45,6 @@ export const QUALITY: Record<0 | 1 | 2, QualitySettings> = {
     bubbles: 60,
     seabedDetail: 0.75,
     creatureDensity: 0.8,
-    vertebrae: 46,
     softGlow: true,
   },
   2: {
@@ -63,7 +60,6 @@ export const QUALITY: Record<0 | 1 | 2, QualitySettings> = {
     bubbles: 90,
     seabedDetail: 1,
     creatureDensity: 1,
-    vertebrae: 52,
     softGlow: true,
   },
 };

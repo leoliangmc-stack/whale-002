@@ -41,10 +41,10 @@ const cells: Cell[] = [
   { label: 'seaPig + brittleStar', tx: X + 12, ty: S - 0.2, frameH: 1.3, seabed: true, items: [new SeaPig(17, 0, X + 12, 0), new BrittleStar(18, 0, X + 12.45, 0.1)] },
   { label: 'anglerfish', tx: X + 25.6, ty: S - 1.5, frameH: 1.6, seabed: true, items: [new Anglerfish(19)] },
   { label: 'glowJelly (hidden)', tx: X - 40, ty: S - 22, frameH: 1.6, items: [new GlowJelly(20)] },
-  { label: 'story p≈0.62 scavengers', tx: X - 1, ty: S - 2, frameH: 18, seabed: true, carcass: true, mgr: { eco: { scav: 1, amph: 1, crabs: 1, enrich: 0.3, sulfo: 0, dwellers: 0 }, mode: 'story', secs: 25 } },
-  { label: 'explore bone community', tx: X - 1, ty: S - 2, frameH: 14, seabed: true, carcass: true, mgr: { eco: { scav: 0.15, amph: 0.1, crabs: 0.8, enrich: 1, sulfo: 1, dwellers: 1 }, mode: 'explore', secs: 25 } },
-  { label: 'explore close-up', tx: X - 3, ty: S - 0.8, frameH: 4, seabed: true, carcass: true, mgr: { eco: { scav: 0.15, amph: 0.1, crabs: 0.8, enrich: 1, sulfo: 1, dwellers: 1 }, mode: 'explore', secs: 25 } },
-  { label: 'midwater sinking view', tx: 30, ty: Number(params.get('ty') ?? 1020), frameH: 26, mgr: { eco: { scav: 0, amph: 0, crabs: 0, enrich: 0, sulfo: 0, dwellers: 0 }, mode: 'story', secs: 10 } },
+  { label: 'story p≈0.62 scavengers', tx: X - 1.7, ty: S - 3.4, frameH: 30.9, seabed: true, carcass: true, mgr: { eco: { scav: 1, amph: 1, crabs: 1, enrich: 0.3, sulfo: 0, dwellers: 0 }, mode: 'story', secs: 25 } },
+  { label: 'explore bone community', tx: X - 1.7, ty: S - 3.4, frameH: 24, seabed: true, carcass: true, mgr: { eco: { scav: 0.15, amph: 0.1, crabs: 0.8, enrich: 1, sulfo: 1, dwellers: 1 }, mode: 'explore', secs: 25 } },
+  { label: 'explore close-up', tx: X - 5.1, ty: S - 0.8, frameH: 4, seabed: true, carcass: true, mgr: { eco: { scav: 0.15, amph: 0.1, crabs: 0.8, enrich: 1, sulfo: 1, dwellers: 1 }, mode: 'explore', secs: 25 } },
+  { label: 'midwater sinking view', tx: X, ty: Number(params.get('ty') ?? 1020), frameH: 44.6, mgr: { eco: { scav: 0, amph: 0, crabs: 0, enrich: 0, sulfo: 0, dwellers: 0 }, mode: 'story', secs: 10 } },
 ];
 
 const only = params.get('i');
@@ -68,8 +68,8 @@ function drawSeabed(rc: RenderCtx, carcass: boolean): void {
     cam.applyTransform(ctx, dpr, 0, 0, 0, 0, false);
     ctx.fillStyle = 'rgba(70,78,88,0.95)';
     ctx.beginPath();
-    for (let x = X - 8.1; x <= X + 5.9; x += 0.2) ctx.lineTo(x, carcassTop(x, 0.4));
-    ctx.lineTo(X + 5.9, S); ctx.lineTo(X - 8.1, S); ctx.closePath(); ctx.fill();
+    for (let x = X - 13.9; x <= X + 10.1; x += 0.2) ctx.lineTo(x, carcassTop(x, 0.4));
+    ctx.lineTo(X + 10.1, S); ctx.lineTo(X - 13.9, S); ctx.closePath(); ctx.fill();
   }
 }
 
@@ -88,7 +88,7 @@ cells.forEach((cell, i) => {
     const m = new CreatureManager();
     m.setQuality(QUALITY[2]);
     for (let k = 0; k < cell.mgr.secs * 30; k++) m.update({ mode: cell.mgr.mode, p: 0.62, eco: cell.mgr.eco, camY: cell.ty, dt: 1 / 30, time: k / 30 });
-    m.drawLayer(rc, 8, 1e9); m.drawLayer(rc, -0.5, 8); m.drawLayer(rc, -1e9, -0.5);
+    m.drawLayer(rc, 13.7, 1e9); m.drawLayer(rc, -0.86, 13.7); m.drawLayer(rc, -1e9, -0.86);
     (window as unknown as Record<string, unknown>)['__mgr' + i] = m;
   } else if (cell.items) {
     env.camY = cell.ty;

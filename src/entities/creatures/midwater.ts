@@ -633,7 +633,7 @@ export class Dumbo extends Creature {
   }
 
   spawn(): void {
-    this.x = this.ax + (this.rand() > 0.5 ? 14 : -14);
+    this.x = this.ax + (this.rand() > 0.5 ? 24 : -24);
     this.y = this.ay - 2;
     this.z = this.az;
   }
@@ -641,7 +641,7 @@ export class Dumbo extends Creature {
   step(dt: number, env: CreatureEnv): void {
     const t = this.clock;
     this.fin += dt * (env.reduced ? 3 : 4.6);
-    wanderSteer(this, this.ax, this.ay, this.az, 5, 0.22, t * 0.7, V);
+    wanderSteer(this, this.ax, this.ay, this.az, 8.6, 0.22, t * 0.7, V);
     // 间歇性地收缩腕间膜，向上滑行
     this.glide = Math.max(0, Math.sin(t * 0.35 + this.phase));
     this.vx = damp(this.vx, V.x, 0.7, dt);

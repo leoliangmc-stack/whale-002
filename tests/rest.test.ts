@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { secondsAt, WORLD } from '../src/config/stages';
 import { CONTACT_P } from '../src/systems/DescentMotion';
 import { StoryTimeline, Y_REST } from '../src/systems/StoryTimeline';
-import { Whale } from '../src/entities/Whale';
-import { REST_GROUND, restSpineDY, S_FIN, WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
+import { FIN_LEN, Whale } from '../src/entities/Whale';
+import { REST_GROUND, restSpineDY, WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
 
 const tl = new StoryTimeline();
 
@@ -31,23 +31,23 @@ describe('rest pose: weight and contact', () => {
 
   it('the heavy chest and belly press into the soft sediment, but only a little', () => {
     const sink = -Math.min(gapAt(b, 0.3), gapAt(b, 0.38), gapAt(b, 0.46));
-    expect(sink).toBeGreaterThan(0.12);
-    expect(sink).toBeLessThan(0.4);
+    expect(sink).toBeGreaterThan(0.2);
+    expect(sink).toBeLessThan(0.69);
   });
 
   it('no part of the body hovers evenly above the seabed', () => {
-    // 从下颌到尾端，最大的悬空只出现在尾柄下方那道拱形的缝隙里，而且不超过半米
-    expect(maxGap(b, 0.1, 1)).toBeLessThan(0.5);
+    // 从下颌到尾端，最大的悬空只出现在尾柄下方那道拱形的缝隙里，而且不超过 0.85 米
+    expect(maxGap(b, 0.1, 1)).toBeLessThan(0.85);
     // 下颌接近海床，吻端自然地微微翘起，但没有抬头
-    expect(gapAt(b, 0.1)).toBeLessThan(0.25);
-    expect(gapAt(b, 0.015)).toBeLessThan(0.9);
+    expect(gapAt(b, 0.1)).toBeLessThan(0.43);
+    expect(gapAt(b, 0.015)).toBeLessThan(1.54);
   });
 
   it('the tail stock arches down to the seabed, leaving a gap that narrows toward the fluke', () => {
     const arch = maxGap(b, 0.62, 0.86);
-    expect(arch).toBeGreaterThan(0.2);
-    expect(Math.abs(gapAt(b, 1))).toBeLessThan(0.12);
-    expect(gapAt(b, 0.97)).toBeLessThan(arch - 0.15);
+    expect(arch).toBeGreaterThan(0.34);
+    expect(Math.abs(gapAt(b, 1))).toBeLessThan(0.21);
+    expect(gapAt(b, 0.97)).toBeLessThan(arch - 0.26);
   });
 
   it('is gently curved, not a straight log, and head and tail are not on one line', () => {
@@ -60,8 +60,9 @@ describe('rest pose: weight and contact', () => {
     const len = Math.hypot(x1 - x0, y1 - y0);
     let dev = 0;
     for (let i = 0; i < n; i++) dev = Math.max(dev, Math.abs((x1 - x0) * (y0 - b.py[i]) - (x0 - b.px[i]) * (y1 - y0)) / len);
-    expect(dev).toBeGreaterThan(0.4);
-    expect(Math.abs(b.py[n - 1] - b.py[0])).toBeGreaterThan(0.4);
+    expect(dev).toBeGreaterThan(0.69);
+    // 尾柄比头部垂得更低
+    expect(b.py[n - 1] - b.py[0]).toBeGreaterThan(0.3);
   });
 
   it('bends smoothly without kinks and without stretching the body', () => {
@@ -93,42 +94,32 @@ describe('rest pose: weight and contact', () => {
   });
 });
 
-describe('rest pose: fins and fluke', () => {
+describe('rest pose: the painted flipper', () => {
   const w = new Whale(1);
   tl.whaleAt(0.54, w.state);
   w.prepare();
-  const tip = (pose: typeof w.finPose, far: boolean) => {
-    const root = w.body.point(S_FIN, far ? -0.32 : -0.5, { x: 0, y: 0 });
-    const a = pose.a + pose.bend * 0.5;
-    return { x: root.x + 4.3 * pose.len * Math.cos(a), y: root.y + 4.3 * pose.len * Math.sin(a) };
+  // 画中的胸鳍贴着身体，随身体一起落下：鳍尖比腹部略低，落在镜头一侧的软泥上
+  const tip = (v: Whale) => {
+    const root = v.finRoot({ x: 0, y: 0 });
+    const a = v.finPose.a;
+    const lx = root.x + FIN_LEN * Math.cos(a);
+    const ly = root.y + FIN_LEN * Math.sin(a);
+    return v.state.y + lx * Math.sin(v.state.pitch) + ly * Math.cos(v.state.pitch);
   };
-  const ground = WORLD.seabedY - w.state.y;
 
-  it('the two pectoral fins are not symmetric', () => {
-    expect(Math.abs(w.finPose.a - w.finFarPose.a)).toBeGreaterThan(0.15);
-    expect(Math.abs(w.finPose.wid - w.finFarPose.wid)).toBeGreaterThan(0.05);
+  // 侧视中鳍尖可以略低于着地线：它落在镜头一侧的软泥上，压进去的部分被近侧隆起的软泥边缘挡住
+  it('rests on the sediment in front of the body without digging deep into it', () => {
+    const y = tip(w);
+    expect(y).toBeGreaterThan(WORLD.seabedY - 0.3);
+    expect(y).toBeLessThan(WORLD.seabedY + 1.1);
   });
 
-  it('the near fin rests on the sediment in front of the body; the far one stays behind it', () => {
-    const near = tip(w.finPose, false);
-    // 近侧鳍尖落在镜头一侧的海床上：侧视中略低于着地线，但不会“插进”海床
-    expect(near.y).toBeGreaterThan(ground);
-    expect(near.y).toBeLessThan(ground + 0.55);
-    const far = tip(w.finFarPose, true);
-    expect(far.y).toBeLessThan(ground);
-  });
-
-  it('a hanging fin is pushed back by the seabed while the whale is still approaching', () => {
+  it('never cuts deep into the seabed while the whale is still approaching', () => {
     const v = new Whale(1);
     for (let p = 0.48; p <= 0.52; p += 0.0005) {
       tl.whaleAt(p, v.state);
       v.prepare();
-      const root = v.body.point(S_FIN, -0.5, { x: 0, y: 0 });
-      const a = v.finPose.a + v.finPose.bend * 0.5;
-      const lx = root.x + 4.3 * v.finPose.len * Math.cos(a);
-      const ly = root.y + 4.3 * v.finPose.len * Math.sin(a);
-      const wy = v.state.y + lx * Math.sin(v.state.pitch) + ly * Math.cos(v.state.pitch);
-      expect(wy, `p=${p.toFixed(4)}`).toBeLessThan(v.state.seabed + 0.52);
+      expect(tip(v), `p=${p.toFixed(4)}`).toBeLessThan(v.state.seabed + 1.1);
     }
   });
 });

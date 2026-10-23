@@ -8,6 +8,7 @@ import { StoryProgressController } from '../controllers/StoryProgressController'
 import { clamp, window4 } from '../core/math';
 import { storage, type Prefs, type QualityPref } from '../core/storage';
 import type { RenderCtx } from '../core/types';
+import { loadWhaleArt, whaleArt } from '../entities/WhaleArt';
 import { ExploreScene } from '../scenes/ExploreScene';
 import { NarrativeScene } from '../scenes/NarrativeScene';
 import { World } from '../scenes/World';
@@ -48,6 +49,7 @@ export class App {
   private time = 0;
   private lastT = 0;
   private frameCount = 0;
+  private artFrames = 0;
   private snapshot: HTMLCanvasElement | null = null;
   private dissolveT = 0;
   private hasScrolled = false;
@@ -139,6 +141,7 @@ export class App {
     this.audio.setMuted(this.prefs.muted);
     this.audio.setVolume(this.prefs.volume);
     void this.assets.load();
+    void loadWhaleArt();
     this.debugHooks();
     this.applyUrl();
   }
@@ -482,7 +485,9 @@ export class App {
       `${this.perf.fps.toFixed(0)} fps · tier ${this.quality.name} · p ${p.toFixed(4)} · ${this.mode} · cam y ${this.camera.cam.cy.toFixed(1)} · frameH ${this.camera.cam.shot.frameH.toFixed(1)}`,
     );
     this.frameCount++;
-    if (this.frameCount === 3) (window as unknown as { __done: boolean }).__done = true;
+    // 截图脚本等待 __done：鲸鱼的绘画加载完成、并且已经画过几帧之后
+    if (whaleArt()) this.artFrames++;
+    if (this.artFrames === 3) (window as unknown as { __done: boolean }).__done = true;
   }
 
   // ------------------------------------------------------------ 调试与测试接口

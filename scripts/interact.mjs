@@ -89,12 +89,15 @@ const P = (page) => page.evaluate(() => window.__wf.app.progress.shown);
   await page.waitForTimeout(800);
   const x1 = await page.evaluate(() => window.__wf.app.camera.ex.x);
   check('explore drag pans', x1 > x0 + 0.5, `${x0.toFixed(2)} → ${x1.toFixed(2)}`);
-  // 点击头骨
-  await page.evaluate(() => { const a = window.__wf.app; a.camera.flyTo(33.5, 1797.5, 9); });
+  // 点击头骨（骨骼画中头骨上的一点，画框像素）
+  await page.evaluate(() => {
+    const a = window.__wf.app; const w = a.world.whale1; const P = { x: 0, y: 0 };
+    w.skeleton.skullToWorld(2350, 215, w.body, w.state, P); a.camera.flyTo(P.x, P.y, 15);
+  });
   await page.waitForTimeout(2500);
   const hit = await page.evaluate(() => {
     const a = window.__wf.app; const w = a.world.whale1; const P = { x: 0, y: 0 }; const S = { x: 0, y: 0, s: 0 };
-    w.skeleton.skullToWorld(1.0, -0.2, w.body, w.state, P); a.camera.cam.project(P.x, P.y, 0, S); return S;
+    w.skeleton.skullToWorld(2350, 215, w.body, w.state, P); a.camera.cam.project(P.x, P.y, 0, S); return S;
   });
   await page.mouse.click(hit.x, hit.y);
   await page.waitForTimeout(600);

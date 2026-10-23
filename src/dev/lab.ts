@@ -3,6 +3,7 @@ import { Camera } from '../core/Camera';
 import { QUALITY } from '../config/performance';
 import { LightingManager } from '../systems/LightingManager';
 import { Whale } from '../entities/Whale';
+import { loadWhaleArt } from '../entities/WhaleArt';
 import type { RenderCtx, Layout } from '../core/types';
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
@@ -16,23 +17,23 @@ const layout: Layout = { device: 'desktop', portrait: false, w: W, h: H, aspect:
 
 type Cell = { label: string; y: number; frameH: number; ox?: number; oy?: number; set: (w: Whale) => void };
 const cells: Cell[] = mode === 'eye' ? [
-  { label: 'eye open', y: 8, frameH: 2.2, ox: 1.95, oy: 0.0, set: (w) => { w.state.eye = 1; } },
-  { label: 'eye half', y: 8, frameH: 2.2, ox: 1.95, oy: 0.0, set: (w) => { w.state.eye = 0.5; } },
-  { label: 'eye closed', y: 8, frameH: 2.2, ox: 1.95, oy: 0.0, set: (w) => { w.state.eye = 0; } },
-  { label: 'head', y: 8, frameH: 7, ox: 3, oy: 0.3, set: (w) => { w.state.mouth = 0; } },
+  { label: 'eye open', y: 8, frameH: 3.6, ox: 4.4, oy: 0.08, set: (w) => { w.state.eye = 1; } },
+  { label: 'eye half', y: 8, frameH: 3.6, ox: 4.4, oy: 0.08, set: (w) => { w.state.eye = 0.5; } },
+  { label: 'eye closed', y: 8, frameH: 3.6, ox: 4.4, oy: 0.08, set: (w) => { w.state.eye = 0; } },
+  { label: 'head', y: 8, frameH: 12, ox: 5.2, oy: 0.5, set: (w) => { w.state.mouth = 0; } },
 ] : [
-  { label: 'swim', y: 60, frameH: 18, set: () => {} },
-  { label: 'mouth 0.5', y: 60, frameH: 18, set: (w) => { w.state.mouth = 0.5; w.state.throat = 0.4; } },
-  { label: 'mouth 1', y: 60, frameH: 18, set: (w) => { w.state.mouth = 1; w.state.throat = 1; } },
-  { label: 'throat full closed', y: 60, frameH: 18, set: (w) => { w.state.mouth = 0.0; w.state.throat = 0.8; } },
-  { label: 'sinking', y: 600, frameH: 18, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.pitch = 0.16; w.state.flex = 0.24; w.state.nod = 0.04; w.state.fluke = 0.14; w.state.finN = 0.3; w.state.finF = 0.26; } },
-  { label: 'rest', y: 1798.3, frameH: 18, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.rest = 1; } },
-  { label: 'decay 0.6', y: 1798.3, frameH: 18, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.rest = 1; w.state.tissue = 0.6; } },
-  { label: 'decay 0.25', y: 1798.3, frameH: 18, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.rest = 1; w.state.tissue = 0.25; w.state.collapse = 0.2; } },
-  { label: 'skeleton', y: 1798.3, frameH: 18, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.rest = 1; w.state.tissue = 0; w.state.collapse = 0.0; } },
-  { label: 'skeleton collapsed + life', y: 1798.3, frameH: 18, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.rest = 1; w.state.tissue = 0; w.state.collapse = 1; w.state.mats = 0.8; w.state.osedax = 0.9; w.state.burial = 0.5; } },
-  { label: 'skull close', y: 1798.3, frameH: 4, ox: 3.5, oy: 0, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.rest = 1; w.state.tissue = 0; w.state.collapse = 1; w.state.mats = 0.8; w.state.osedax = 0.9; } },
-  { label: 'vertebra micro', y: 1798.3, frameH: 0.9, ox: -1.5, oy: -0.6, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.rest = 1; w.state.tissue = 0; w.state.collapse = 1; w.state.mats = 0.8; w.state.osedax = 0.9; } },
+  { label: 'swim', y: 60, frameH: 31, set: () => {} },
+  { label: 'mouth 0.5', y: 60, frameH: 31, set: (w) => { w.state.mouth = 0.5; w.state.throat = 0.6; } },
+  { label: 'mouth 1', y: 60, frameH: 31, set: (w) => { w.state.mouth = 1; w.state.throat = 1; } },
+  { label: 'throat full closed', y: 60, frameH: 31, set: (w) => { w.state.mouth = 0.0; w.state.throat = 0.8; } },
+  { label: 'sinking', y: 600, frameH: 31, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.pitch = 0.16; w.state.flex = 0.41; w.state.nod = 0.07; w.state.fluke = 0.14; w.state.finN = 0.3; w.state.finF = 0.26; } },
+  { label: 'rest', y: 1797.6, frameH: 31, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.rest = 1; } },
+  { label: 'decay 0.6', y: 1797.6, frameH: 31, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.rest = 1; w.state.tissue = 0.6; } },
+  { label: 'decay 0.25', y: 1797.6, frameH: 31, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.eye = 0; w.state.rest = 1; w.state.tissue = 0.25; w.state.collapse = 0.2; } },
+  { label: 'skeleton', y: 1797.6, frameH: 31, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.rest = 1; w.state.tissue = 0; w.state.collapse = 0.0; } },
+  { label: 'skeleton collapsed + life', y: 1797.6, frameH: 31, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.rest = 1; w.state.tissue = 0; w.state.collapse = 1; w.state.mats = 0.8; w.state.osedax = 0.9; w.state.burial = 0.5; } },
+  { label: 'skull close', y: 1797.6, frameH: 7, ox: 6, oy: 0, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.rest = 1; w.state.tissue = 0; w.state.collapse = 1; w.state.mats = 0.8; w.state.osedax = 0.9; } },
+  { label: 'vertebra micro', y: 1797.6, frameH: 1.5, ox: -2.6, oy: -1.0, set: (w) => { w.state.swim = 0; w.state.life = 0; w.state.rest = 1; w.state.tissue = 0; w.state.collapse = 1; w.state.mats = 0.8; w.state.osedax = 0.9; } },
 ];
 
 const only = params.get('i');
@@ -43,6 +44,7 @@ const cw = W / cols, ch = H / rows;
 const light = new LightingManager();
 const phase = Number(params.get('phase') ?? 1.2);
 
+await loadWhaleArt();
 cells.forEach((cell, i) => {
   const cx = (i % cols) * cw, cy = Math.floor(i / cols) * ch;
   const cam = new Camera();
@@ -67,7 +69,6 @@ cells.forEach((cell, i) => {
     const P = { x: 0, y: 0, s: 0 }; cam.project(0, 1800, 0, P);
     octx.fillStyle = '#2a3036'; octx.fillRect(0, P.y, cw, ch - P.y);
   }
-  w.drawInterior(rc);
   w.draw(rc);
   ctx.drawImage(off, cx, cy);
   ctx.restore();

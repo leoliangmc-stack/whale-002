@@ -3,6 +3,7 @@ import { OPENING_SHOTS, SEGMENTS, segmentScreens, WORLD } from '../src/config/st
 import { StoryProgressController } from '../src/controllers/StoryProgressController';
 import { Camera, type ShotParams } from '../src/core/Camera';
 import { StoryTimeline } from '../src/systems/StoryTimeline';
+import { S_EYE, S_REF, WHALE_LEN } from '../src/entities/WhaleBody';
 
 const tl = new StoryTimeline();
 const LANDSCAPE = -0.05;
@@ -10,8 +11,9 @@ const LANDSCAPE = -0.05;
 function frameAt(p: number, w = 1440, h = 900) {
   const f = tl.evaluate(p, LANDSCAPE);
   const whale = { ...f.whale1 };
-  // 眼睛约在身体参考点前方 1.9 米
-  const eye = { x: whale.x + 1.93 * Math.cos(whale.pitch), y: whale.y + 1.93 * Math.sin(whale.pitch) };
+  // 眼睛约在身体参考点前方 4.4 米
+  const d = (S_REF - S_EYE) * WHALE_LEN;
+  const eye = { x: whale.x + d * Math.cos(whale.pitch), y: whale.y + d * Math.sin(whale.pitch) };
   const shot: ShotParams = { tx: 0, ty: 0, frameH: 0, sx: 0, sy: 0, elev: 0, lat: 0 };
   StoryTimeline.shotFrom(f, whale, eye, w / h, shot);
   const cam = new Camera();
@@ -53,7 +55,7 @@ describe('opening: five continuous shots', () => {
   it('low-angle shot: the camera sits below the whale, which passes the upper frame', () => {
     for (const p of [0.04, 0.044]) {
       const { whale, cam } = frameAt(p);
-      expect(cam.cy).toBeGreaterThan(whale.y + 4);
+      expect(cam.cy).toBeGreaterThan(whale.y + 6.9);
       const o = { x: 0, y: 0, s: 0 };
       cam.project(whale.x, whale.y, whale.z, o);
       expect(o.y / cam.h).toBeLessThan(0.5);
@@ -62,7 +64,7 @@ describe('opening: five continuous shots', () => {
 
   it('eye detail: the camera closes in on the eye', () => {
     const { shot } = frameAt(0.058);
-    expect(shot.frameH).toBeLessThan(6);
+    expect(shot.frameH).toBeLessThan(10.3);
   });
 
   it('krill reveal: none at first, then a few strays, then the swarm', () => {
@@ -84,7 +86,7 @@ describe('opening: five continuous shots', () => {
       const b = frameAt(p + dp).whale;
       const dt = dp / StoryProgressController.rateAt(p);
       const speed = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) / dt;
-      expect(speed, `speed at p=${p.toFixed(4)}`).toBeLessThan(5.5);
+      expect(speed, `speed at p=${p.toFixed(4)}`).toBeLessThan(9.4);
       expect(Math.abs(b.pitch - a.pitch) / dt, `turn at p=${p.toFixed(4)}`).toBeLessThan(0.1);
       expect(b.mouth, `mouth at p=${p.toFixed(4)}`).toBeLessThan(0.05);
     }

@@ -365,7 +365,7 @@ export class SquatLobster extends Creature {
     if (this.hop <= 0 && this.rand() < dt * 0.03 && !env.reduced) {
       this.hop = 1;
       this.hopFrom = this.x;
-      this.hopTo = clamp(this.x + (this.rand() - 0.5) * 0.8, REST_X - 8, REST_X + 6);
+      this.hopTo = clamp(this.x + (this.rand() - 0.5) * 0.8, REST_X - 13.7, REST_X + 10.3);
     }
     if (this.hop > 0) {
       this.hop = Math.max(0, this.hop - dt * 1.2);
@@ -475,11 +475,11 @@ export class SeaPig extends Creature {
   }
 
   spawn(): void {
-    this.x = this.ax - this.dir * 5;
+    this.x = this.ax - this.dir * 8.6;
   }
 
   step(dt: number, env: CreatureEnv): void {
-    const target = this.wanted ? this.ax : this.ax + (this.x > this.ax ? 20 : -20);
+    const target = this.wanted ? this.ax : this.ax + (this.x > this.ax ? 34.3 : -34.3);
     if (Math.abs(target - this.x) > 3) this.dir = Math.sign(target - this.x);
     else if (this.rand() < dt * 0.04) this.dir = -this.dir;
     this.feed = damp(this.feed, Math.sin(this.clock * 0.3 + this.phase) > 0.6 ? 1 : 0, 1.5, dt);

@@ -3,6 +3,7 @@ import { clamp, hash1, lerp, sampleProfile, smoothstep, TAU } from '../core/math
 import { textures } from '../core/textures';
 import type { RenderCtx } from '../core/types';
 import type { SurfaceState } from './StoryTimeline';
+import { S_BLOW, S_REF, WHALE_LEN } from '../entities/WhaleBody';
 
 /**
  * 海面：
@@ -11,9 +12,12 @@ import type { SurfaceState } from './StoryTimeline';
  *  - 高空俯视镜头：广阔海面、浮出水面的鲸鱼、扩散的水波与第一次呼气。
  */
 
+/** 俯视的蓝鲸：身体半宽（米），量自 whale-kit 的腹面画（俯视与仰视的轮廓相同） */
 const DORSAL: ReadonlyArray<readonly [number, number]> = [
-  [0, 0.16], [0.03, 0.55], [0.08, 0.92], [0.15, 1.2], [0.25, 1.38], [0.35, 1.46], [0.45, 1.4],
-  [0.55, 1.22], [0.65, 0.98], [0.75, 0.7], [0.85, 0.42], [0.93, 0.27], [1, 0.2],
+  [0, 0.3], [0.02, 1.16], [0.04, 1.46], [0.065, 1.71], [0.09, 1.86], [0.11, 1.94], [0.13, 2.06], [0.15, 2.16],
+  [0.2, 2.24], [0.24, 2.38], [0.3, 2.45], [0.38, 2.51], [0.42, 2.53], [0.46, 2.48], [0.51, 2.44], [0.55, 2.42],
+  [0.6, 2.3], [0.66, 2.03], [0.71, 1.94], [0.75, 1.64], [0.8, 1.35], [0.84, 1.21], [0.88, 0.87], [0.93, 0.69],
+  [0.97, 0.58], [1, 0.5],
 ];
 
 const SKY_TOP = hex('#5aa6d8');
@@ -213,7 +217,7 @@ export class OceanSurface {
     ctx.globalCompositeOperation = 'source-over';
 
     // 鲸鱼位于画面中心；在与侧视镜头交叉溶解时，对齐到侧视鲸鱼的屏幕位置
-    const k = anchor ? 1 - smoothstep(60, 150, s.alt) : 0;
+    const k = anchor ? 1 - smoothstep(100, 260, s.alt) : 0;
     const cx = lerp(w * 0.5, anchor ? anchor.x : w * 0.5, k);
     const cy = lerp(h * 0.52, anchor ? anchor.y : h * 0.52, k);
     ctx.save();
@@ -228,17 +232,19 @@ export class OceanSurface {
     // 第一次呼气：俯视的白色水雾团
     if (s.breath1 > 0 && s.breath1 < 1) {
       const T = s.breath1 * 5;
-      const bx = cx + Math.cos(s.rot) * 3.2 * scale;
-      const by = cy + Math.sin(s.rot) * 3.2 * scale;
+      // 从正上方看，又高又细的喷气柱是一团圆形的水雾
+      const blow = (S_REF - S_BLOW) * WHALE_LEN;
+      const bx = cx + Math.cos(s.rot) * blow * scale;
+      const by = cy + Math.sin(s.rot) * blow * scale;
       const mists = textures().mist;
       for (let i = 0; i < 26; i++) {
         const t = T - hash1(i * 7) * 0.4;
         if (t <= 0) continue;
         const ang = hash1(i * 7 + 1) * TAU;
-        const sp = (0.6 + hash1(i * 7 + 2) * 1.6) * (1 - Math.exp(-t / 0.6));
-        const x = bx + Math.cos(ang) * sp * scale + t * 0.9 * scale;
-        const y = by + Math.sin(ang) * sp * scale - t * 0.3 * scale;
-        const r = (0.6 + t * 0.9) * scale;
+        const sp = (0.8 + hash1(i * 7 + 2) * 1.8) * (1 - Math.exp(-t / 0.6));
+        const x = bx + Math.cos(ang) * sp * scale + t * 1.5 * scale;
+        const y = by + Math.sin(ang) * sp * scale - t * 0.5 * scale;
+        const r = (0.9 + t * 1.4) * scale;
         ctx.globalAlpha = 0.55 * smoothstep(0, 0.2, t) * (1 - smoothstep(1.5, 4.8, t));
         ctx.drawImage(mists[i % 3], x - r, y - r, r * 2, r * 2);
       }
@@ -263,11 +269,11 @@ export class OceanSurface {
   private drawRipples(ctx: CanvasRenderingContext2D, s: SurfaceState, scale: number): void {
     // 发射时间（秒，相对于 s.t）：浮出水面时一组，呼吸时一组
     const emits = [2.5, 4, 5.5, 7.5, 9, 10.8, 12.6, 14.4];
-    ctx.lineWidth = Math.max(1, 0.18 * scale);
+    ctx.lineWidth = Math.max(1, 0.3 * scale);
     for (let i = 0; i < emits.length; i++) {
       const age = s.t - emits[i];
       if (age <= 0 || age > 12) continue;
-      const r = (2 + age * 1.6) * scale;
+      const r = (3.4 + age * 2.7) * scale;
       const a = 0.32 * (1 - age / 12) * s.surfacing;
       ctx.strokeStyle = `rgba(220,245,255,${a})`;
       ctx.beginPath();
@@ -280,10 +286,10 @@ export class OceanSurface {
     }
   }
 
-  /** 俯视的座头鲸：水下部分偏青绿、模糊；露出水面的背部深色且湿亮。 */
+  /** 俯视的蓝鲸：水下部分偏青绿、模糊；露出水面的背部深色且湿亮。胸鳍短小，尾叶宽阔。 */
   private drawDorsalWhale(ctx: CanvasRenderingContext2D, s: SurfaceState, phase: number, swim: number, time: number): void {
-    const L = 14;
-    const ref = 0.42;
+    const L = WHALE_LEN;
+    const ref = S_REF;
     const flukeK = 1 - 0.18 * swim * (0.5 + 0.5 * Math.sin(phase));
     const outline = (k: number, s0 = 0, s1 = 1) => {
       ctx.beginPath();
@@ -302,33 +308,33 @@ export class OceanSurface {
       ctx.closePath();
     };
     const sub = 1 - s.surfacing * 0.35;
-    // 胸鳍（水下的白色长鳍呈现青绿色）
+    // 胸鳍：短而窄，与背部同色
     for (const side of [-1, 1]) {
       ctx.save();
-      ctx.translate(L * (ref - 0.33), side * 1.25);
-      ctx.rotate(side * (Math.PI - 0.95) + Math.sin(time * 0.5 + side) * 0.05);
-      ctx.fillStyle = `rgba(150,215,225,${0.75 * sub})`;
+      ctx.translate(L * (ref - 0.31), side * 2.3);
+      ctx.rotate(side * (Math.PI - 0.95) + Math.sin(time * 0.5 + side) * 0.04);
+      ctx.fillStyle = `rgba(52,98,118,${0.8 * sub})`;
       ctx.beginPath();
-      ctx.moveTo(0, -0.35);
-      ctx.quadraticCurveTo(2.2, -0.42, 4.3, -0.05);
-      ctx.quadraticCurveTo(2.2, 0.32, 0, 0.35);
+      ctx.moveTo(0, -0.32);
+      ctx.quadraticCurveTo(1.5, -0.38, 2.9, -0.04);
+      ctx.quadraticCurveTo(1.5, 0.26, 0, 0.32);
       ctx.closePath();
       ctx.fill();
       ctx.restore();
     }
-    // 尾叶
+    // 尾叶：宽阔的三角形，后缘平直，中间一道缺刻
     ctx.save();
     ctx.translate(L * (ref - 1), 0);
     ctx.scale(flukeK, 1);
     ctx.fillStyle = `rgba(28,62,84,${0.85 * sub})`;
     ctx.beginPath();
-    ctx.moveTo(0.3, 0);
-    ctx.bezierCurveTo(-0.4, -0.6, -1.3, -1.8, -1.4, -2.3);
-    ctx.quadraticCurveTo(-0.9, -1.2, -1.1, -0.1);
-    ctx.lineTo(-0.9, 0);
-    ctx.lineTo(-1.1, 0.1);
-    ctx.quadraticCurveTo(-0.9, 1.2, -1.4, 2.3);
-    ctx.bezierCurveTo(-1.3, 1.8, -0.4, 0.6, 0.3, 0);
+    ctx.moveTo(0.5, 0);
+    ctx.bezierCurveTo(-0.7, -1, -2.2, -2.6, -2.6, -3.1);
+    ctx.quadraticCurveTo(-1.7, -1.6, -1.9, -0.15);
+    ctx.lineTo(-1.6, 0);
+    ctx.lineTo(-1.9, 0.15);
+    ctx.quadraticCurveTo(-1.7, 1.6, -2.6, 3.1);
+    ctx.bezierCurveTo(-2.2, 2.6, -0.7, 1, 0.5, 0);
     ctx.fill();
     ctx.restore();
     // 身体（水下，柔和的边缘）
@@ -351,30 +357,35 @@ export class OceanSurface {
       ctx.fill();
       // 湿润的高光
       ctx.strokeStyle = 'rgba(220,240,255,0.35)';
-      ctx.lineWidth = 0.1;
+      ctx.lineWidth = 0.17;
       ctx.beginPath();
-      ctx.moveTo(L * (ref - 0.14), -0.15);
-      ctx.quadraticCurveTo(L * (ref - 0.4), -0.35, L * (ref - 0.66), -0.12);
+      ctx.moveTo(L * (ref - 0.14), -0.26);
+      ctx.quadraticCurveTo(L * (ref - 0.4), -0.6, L * (ref - 0.66), -0.2);
       ctx.stroke();
-      // 喷气孔
+      // 喷气孔（前方有一道防溅脊）
       ctx.fillStyle = '#0d1014';
       ctx.beginPath();
-      ctx.ellipse(L * (ref - 0.19), -0.13, 0.16, 0.06, 0.1, 0, TAU);
-      ctx.ellipse(L * (ref - 0.19), 0.13, 0.16, 0.06, -0.1, 0, TAU);
+      ctx.ellipse(L * (ref - S_BLOW), -0.22, 0.28, 0.1, 0.1, 0, TAU);
+      ctx.ellipse(L * (ref - S_BLOW), 0.22, 0.28, 0.1, -0.1, 0, TAU);
       ctx.fill();
-      // 背鳍
+      ctx.strokeStyle = 'rgba(200,225,240,0.25)';
+      ctx.lineWidth = 0.12;
+      ctx.beginPath();
+      ctx.arc(L * (ref - S_BLOW) + 0.5, 0, 0.6, -1.1, 1.1);
+      ctx.stroke();
+      // 背鳍：很小，在身体后部约四分之三处
       ctx.fillStyle = '#1b2127';
       ctx.beginPath();
-      ctx.ellipse(L * (ref - 0.665), 0, 0.35, 0.12, 0, 0, TAU);
+      ctx.ellipse(L * (ref - 0.79), 0, 0.4, 0.12, 0, 0, TAU);
       ctx.fill();
       // 背部周围的白色浪花：沿边缘散布的柔和泡沫
       const mist = textures().mist;
       for (let i = 0; i < 22; i++) {
         const t = 0.1 + (i / 21) * 0.6;
         const side = i % 2 ? 1 : -1;
-        const x = L * (ref - t) + Math.sin(time * 1.3 + i) * 0.1;
+        const x = L * (ref - t) + Math.sin(time * 1.3 + i) * 0.17;
         const y = side * sampleProfile(DORSAL, t) * 0.7;
-        const r = 0.45 + hash1(i * 7) * 0.4;
+        const r = 0.75 + hash1(i * 7) * 0.7;
         ctx.globalAlpha = k * (0.35 + 0.2 * Math.sin(time * 0.8 + i * 1.7));
         ctx.drawImage(mist[i % 3], x - r, y - r, r * 2, r * 2);
       }

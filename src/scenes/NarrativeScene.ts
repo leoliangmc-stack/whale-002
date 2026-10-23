@@ -6,6 +6,7 @@ import { StoryProgressController } from '../controllers/StoryProgressController'
 import { StoryTimeline, WHALE_SWITCH, type StoryFrame } from '../systems/StoryTimeline';
 import { DescentMotion } from '../systems/DescentMotion';
 import { WORLD } from '../config/stages';
+import { LOWER_MAX } from '../entities/WhaleBody';
 import type { World } from './World';
 
 /**
@@ -89,7 +90,7 @@ export class NarrativeScene {
     const sb = world.timeline.descent.seabedShift(p, this.tmp);
     world.seabed.shiftX = sb.x;
     world.seabed.shiftY = sb.y;
-    world.seabed.reveal = DescentMotion.covers(p) ? 1 - smoothstep(8, 28, WORLD.seabedY + sb.y - (w1.state.y + 1.75)) : 1;
+    world.seabed.reveal = DescentMotion.covers(p) ? 1 - smoothstep(14, 48, WORLD.seabedY + sb.y - (w1.state.y + LOWER_MAX)) : 1;
 
     // 水体参照系：海洋雪与途中的生物随水体漂移；鲸鱼身体经过时推开附近的颗粒
     const water = f.water;
@@ -99,7 +100,7 @@ export class NarrativeScene {
     const wk = pm.wake;
     wk.amt = water.wake;
     if (wk.amt > 0) {
-      w1.toWorld(-1.1, 0.15, this.tmp);
+      w1.toWorld(-1.9, 0.26, this.tmp);
       wk.x = this.tmp.x;
       wk.y = this.tmp.y;
       wk.z = w1.state.z;

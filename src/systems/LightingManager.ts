@@ -120,7 +120,7 @@ export class LightingManager {
       const dx = x - this.focusX;
       const dy = (y - this.focusY) * 1.4;
       const dz = Math.max(0, z) * 0.6;
-      const r2 = (dx * dx + dy * dy + dz * dz) / (22 * 22);
+      const r2 = (dx * dx + dy * dy + dz * dz) / (37.7 * 37.7);
       const k = this.focusLight * Math.exp(-r2);
       out.light += k * 0.55;
       out.warm = k * 0.55;

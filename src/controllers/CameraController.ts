@@ -1,6 +1,7 @@
 import { Camera, type ShotParams } from '../core/Camera';
 import { clamp, damp, lerp, noise1 } from '../core/math';
 import { EXPLORE_BOUNDS } from '../config/scene';
+import { WORLD } from '../config/stages';
 
 /**
  * CameraController：叙事模式下镜头完全由时间线决定（再叠加极轻微的“手持”漂移）；
@@ -18,8 +19,8 @@ export class CameraController {
   private readonly shot: ShotParams = { tx: 0, ty: 0, frameH: 20, sx: 0.5, sy: 0.5, elev: 0, lat: 0 };
 
   // ---- 探索模式状态（目标值与当前值）
-  ex = { x: 30, y: 1790, frameH: 30 };
-  private exGoal = { x: 30, y: 1790, frameH: 30 };
+  ex = { x: WORLD.restX, y: WORLD.seabedY - 17.1, frameH: 51.4 };
+  private exGoal = { x: WORLD.restX, y: WORLD.seabedY - 17.1, frameH: 51.4 };
   private vel = { x: 0, y: 0 };
   follow: ExploreTarget | null = null;
   /** 正在飞向某处（返回全景等） */
@@ -132,7 +133,7 @@ export class CameraController {
     sh.sx = 0.5;
     sh.sy = 0.5;
     // 放大时相机更贴近，俯视角相应减小
-    sh.elev = clamp(this.ex.frameH * 0.22, 0.05, 6);
+    sh.elev = clamp(this.ex.frameH * 0.22, 0.05, 10.3);
     sh.lat = 0;
     this.cam.setShot(sh);
   }

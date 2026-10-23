@@ -11,7 +11,7 @@ import { LOWER, S_REF, WHALE_LEN } from '../entities/WhaleBody';
  *     在“故事时间”（自动播放时的秒数）上积分一次并制成查找表。查表只依赖叙事进度，
  *     因此前进、倒退、暂停和任意跳转都得到同一个位置、姿态与镜头状态；
  *  2. 尾柄、尾叶、胸鳍和头部是独立的被动动画层，由二阶阻尼跟随产生不同程度的惯性与滞后；
- *  3. 1800 米的下沉被艺术化压缩：鲸鱼相对周围水体的“可见下沉”只有约 2 m/s，
+ *  3. 1800 米的下沉被艺术化压缩：鲸鱼相对周围水体的“可见下沉”只有约 3.5 m/s，
  *     其余的深度（hidden）由镜头与鲸鱼一起整体带走。海洋雪与途中的生物跟随“水体参照系”，
  *     因此画面里是一头巨大的身体在水中缓慢下沉，而深度计、光照与水色仍按真实深度变化。
  *     海床同样锚定在水体参照系中（锚点是接触海床的那一刻），压缩在接触之前结束，
@@ -38,8 +38,8 @@ const BEAT_AMP: Keys = [
 const BEAT_FREQ: Keys = [[DESCENT_START, 0.15], [0.292, 0.16], [0.302, 0.14], [0.31, 0.11], [0.32, 0.075]];
 /** 失去浮力后的净下沉加速度（m/s²） */
 const SINK: Keys = [
-  [DESCENT_START, 0], [0.326, 0], [0.332, 0.06], [0.339, 0.3], [0.347, 0.56], [0.365, 0.62], [0.41, 0.56],
-  [0.45, 0.5], [0.475, 0.42], [0.492, 0.34], [DESCENT_END, 0.34],
+  [DESCENT_START, 0], [0.326, 0], [0.332, 0.1], [0.339, 0.51], [0.347, 0.96], [0.365, 1.06], [0.41, 0.96],
+  [0.45, 0.86], [0.475, 0.72], [0.492, 0.58], [DESCENT_END, 0.58],
 ];
 /** 头重力矩（rad/s²）：比浮力变化早约两秒，头部先沉 */
 const HEAD: Keys = [
@@ -57,13 +57,14 @@ const STIR: Keys = [
 ];
 
 // ------------------------------------------------------------------ 物理参数（单位质量）
+// 24 米的身体：长度与速度一起按体长放大，节奏（秒）不变，所以二次阻力系数按体长缩小、推力按体长放大
 
-const DRAG_X2 = 0.3;
+const DRAG_X2 = 0.175;
 const DRAG_X1 = 0.25;
-const DRAG_Y2 = 0.11;
+const DRAG_Y2 = 0.064;
 const DRAG_Y1 = 0.06;
 /** 尾叶推力系数：幅度 × 频率 → 推力 */
-const THRUST = 2.5;
+const THRUST = 4.3;
 /** 低头下沉时沿身体方向的轻微滑行 */
 const GLIDE = 0.05;
 /** 俯仰：自然频率约 9 秒、接近临界阻尼，只会有一次很轻的回摆 */
@@ -232,8 +233,8 @@ export class DescentMotion {
       const stir = stirT.at(p);
 
       // 水流：两层不相关的缓慢噪声，周期十几秒
-      const uc = stir * (0.07 * noise1(t * 0.071, 3) + 0.035 * noise1(t * 0.17, 4));
-      const wc = stir * (0.05 * noise1(t * 0.063, 5) + 0.02 * noise1(t * 0.19, 6));
+      const uc = stir * (0.12 * noise1(t * 0.071, 3) + 0.06 * noise1(t * 0.17, 4));
+      const wc = stir * (0.086 * noise1(t * 0.063, 5) + 0.034 * noise1(t * 0.19, 6));
       const amp = clamp(beatAmp.at(p), 0, 1);
 
       // 被动层的驱动：相对水流（下沉 → 自下而上的水流托起尾叶与胸鳍）、角速度（尾部与胸鳍滞后）
@@ -248,12 +249,12 @@ export class DescentMotion {
         const n1 = 0.65 * noise1(t * 0.23, 21) + 0.35 * noise1(t * 0.53, 24);
         const n2 = 0.65 * noise1(t * 0.31, 22) + 0.35 * noise1(t * 0.61, 25);
         const n3 = 0.65 * noise1(t * 0.27, 23) + 0.35 * noise1(t * 0.57, 26);
-        flexT = 0.11 * flow - 2.4 * om + stir * 0.11 * n1;
+        flexT = 0.11 * flow - 4.1 * om + stir * 0.19 * n1;
         // 尾叶比尾柄更软：随尾柄的运动反向滞后
-        flukeT = 0.07 * flow - 0.55 * flexL.v + stir * 0.06 * n1;
-        nodT = 1.1 * om + 0.012 * flow;
-        finT = 0.15 * flow + 0.18 * fwd - 1.5 * om + stir * 0.1 * n2;
-        finFarT = 0.13 * flow + 0.16 * fwd - 1.2 * om + stir * 0.08 * n3;
+        flukeT = 0.041 * flow - 0.32 * flexL.v + stir * 0.06 * n1;
+        nodT = 1.9 * om + 0.012 * flow;
+        finT = 0.088 * flow + 0.105 * fwd - 1.5 * om + stir * 0.1 * n2;
+        finFarT = 0.076 * flow + 0.093 * fwd - 1.2 * om + stir * 0.08 * n3;
         if (i === 0) {
           flexL.reset(flexT);
           flukeL.reset(flukeT);
@@ -300,8 +301,8 @@ export class DescentMotion {
       let aw = headT.at(p) - PITCH_K * th - PITCH_C * om + stir * (0.013 * noise1(t * 0.071, 9) + 0.005 * noise1(t * 0.19, 10));
 
       const yTrue = y + hidden;
-      // 只在接近海床时检测接触（身体最低点不会低于参考点下方 3 米）
-      if (contact && yTrue + 3 > WORLD.seabedY) {
+      // 只在接近海床时检测接触（身体最低点不会低于参考点下方 5 米）
+      if (contact && yTrue + 5 > WORLD.seabedY) {
         const c = Math.cos(th);
         const s = Math.sin(th);
         for (const q of CONTACTS) {
@@ -313,7 +314,7 @@ export class DescentMotion {
           const pvy = vy + om * ox;
           // 柔软的沉积物：弹性很小、阻尼很大，不会弹起
           const fy = -Math.max(0, 6 * pen + 5 * pvy);
-          const fx = -1.2 * pvx * Math.min(1, pen * 20);
+          const fx = -1.2 * pvx * Math.min(1, pen * 12);
           ax += fx / CONTACTS.length;
           ay += fy;
           aw += (ox * fy - oy * fx) / INERTIA;
@@ -459,7 +460,7 @@ export class DescentMotion {
   }
 
   /**
-   * 生物在进度 p 时相对其名义位置的偏移。离鲸鱼较远（水体参照系中 > 60 m）时逐渐回到名义位置——
+   * 生物在进度 p 时相对其名义位置的偏移。离鲸鱼较远（水体参照系中 > 100 m）时逐渐回到名义位置——
    * 那时它早已在画面之外，所以过渡不可见；下沉动作之外偏移为 0。
    */
   shiftFor(a: { ox: number; oy: number; wy: number }, p: number, out: { x: number; y: number }): { x: number; y: number } {
@@ -468,7 +469,7 @@ export class DescentMotion {
       return out;
     }
     const rel = Math.abs(a.wy - this.at(this.wy, p));
-    const w = 1 - smoothstep(60, 95, rel);
+    const w = 1 - smoothstep(100, 160, rel);
     out.x = (this.at(this.tab.waterX, p) - a.ox) * w;
     out.y = (this.at(this.tab.waterY, p) - a.oy) * w;
     return out;

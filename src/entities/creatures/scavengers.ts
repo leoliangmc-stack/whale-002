@@ -63,20 +63,20 @@ export class Hagfish extends Creature {
 
   spawn(): void {
     const side = this.rand() > 0.5 ? 1 : -1;
-    this.x = REST_X + side * (13 + this.rand() * 6);
-    this.y = SEABED - 0.5 - this.rand() * 2.5;
-    this.z = -0.6 - this.rand() * 1.2;
+    this.x = REST_X + side * (22.3 + this.rand() * 10.3);
+    this.y = SEABED - 0.86 - this.rand() * 4.3;
+    this.z = -1.03 - this.rand() * 2.06;
     this.heading = side > 0 ? Math.PI : 0;
     this.yaw = side > 0 ? Math.PI : 0;
     this.pickFeedTarget();
   }
 
   private pickFeedTarget(): void {
-    const x = lerp(CARCASS_X0 + 1.2, CARCASS_X1 - 1.2, this.rand());
+    const x = lerp(CARCASS_X0 + 2.06, CARCASS_X1 - 2.06, this.rand());
     const top = carcassTop(x, 0.3);
     this.tx = x;
     this.ty = lerp(top + 0.25, SEABED - 0.25, this.rand());
-    this.tz = -0.55 - this.rand() * 0.5;
+    this.tz = -0.94 - this.rand() * 0.86;
     this.state = 'approach';
   }
 
@@ -84,7 +84,7 @@ export class Hagfish extends Creature {
     this.wave += dt * (this.state === 'feed' ? 7 : 5.2);
     if (!this.wanted && this.state !== 'leave') {
       this.state = 'leave';
-      this.tx = this.x + (this.x > REST_X ? 25 : -25);
+      this.tx = this.x + (this.x > REST_X ? 42.9 : -42.9);
       this.ty = this.y - 1;
     }
     let speed = 0.38;
@@ -246,9 +246,9 @@ export class SleeperShark extends Creature {
 
   spawn(): void {
     this.dir = this.rand() > 0.5 ? 1 : -1;
-    this.x = REST_X - this.dir * 34;
-    this.y = SEABED - 3.4;
-    this.z = 10 + this.rand() * 3;
+    this.x = REST_X - this.dir * 58.3;
+    this.y = SEABED - 5.83;
+    this.z = 17.1 + this.rand() * 5.1;
     this.yaw = this.dir > 0 ? 0 : Math.PI;
   }
 
@@ -256,12 +256,12 @@ export class SleeperShark extends Creature {
     const sp = env.reduced ? 0.3 : 0.42;
     this.tail += dt * 1.9;
     if (this.wanted) {
-      if (this.x > REST_X + 30) this.dir = -1;
-      if (this.x < REST_X - 30) this.dir = 1;
+      if (this.x > REST_X + 51.4) this.dir = -1;
+      if (this.x < REST_X - 51.4) this.dir = 1;
     }
     this.vx = damp(this.vx, this.dir * sp, 0.4, dt);
     this.x += this.vx * dt;
-    this.y = SEABED - 3.2 + Math.sin(this.clock * 0.09 + this.phase) * 0.8;
+    this.y = SEABED - 5.49 + Math.sin(this.clock * 0.09 + this.phase) * 1.37;
     this.turnToward(this.vx, dt, 0.6);
     this.tilt = Math.cos(this.clock * 0.09 + this.phase) * 0.04;
   }
@@ -367,7 +367,7 @@ export class Grenadier extends Creature {
 
   spawn(): void {
     const side = this.rand() > 0.5 ? 1 : -1;
-    this.x = this.ax + side * 16;
+    this.x = this.ax + side * 27.4;
     this.y = SEABED - 2;
     this.z = this.az;
   }
@@ -377,7 +377,7 @@ export class Grenadier extends Creature {
     this.tail += dt * (2.4 + this.glide * 2);
     // 每隔一段时间缓慢滑行到新位置
     this.glide = Math.max(0, Math.sin(t * 0.12 + this.phase));
-    const ax = this.wanted ? this.ax + Math.sin(t * 0.05 + this.phase) * 4 : this.ax + (this.x > this.ax ? 30 : -30);
+    const ax = this.wanted ? this.ax + Math.sin(t * 0.05 + this.phase) * 6.86 : this.ax + (this.x > this.ax ? 51.4 : -51.4);
     wanderSteer(this, ax, SEABED - 1.1, this.az, 3, 0.1 + this.glide * 0.25, t, V);
     const sp = env.reduced ? 0.7 : 1;
     this.vx = damp(this.vx, V.x * sp, 0.6, dt);
@@ -502,7 +502,7 @@ export class AmphipodSwarm extends Creature {
     super(seed);
     this.custom = true;
     this.n = count;
-    this.radius = 6;
+    this.radius = 10.3;
     this.size = 0.04;
     const mk = () => new Float32Array(count);
     this.hx = mk();
@@ -514,16 +514,16 @@ export class AmphipodSwarm extends Creature {
     this.py = mk();
     this.pz = mk();
     for (let i = 0; i < count; i++) {
-      const x = lerp(CARCASS_X0 + 0.4, CARCASS_X1 - 0.6, this.rand());
+      const x = lerp(CARCASS_X0 + 0.69, CARCASS_X1 - 1.03, this.rand());
       const top = carcassTop(x, 0.35);
       this.hx[i] = x;
       this.hy[i] = lerp(top + 0.15, SEABED - 0.1, Math.pow(this.rand(), 0.7));
-      this.hz[i] = -0.45 + this.rand() * 0.6;
+      this.hz[i] = -0.77 + this.rand() * 1.03;
       this.th2[i] = this.rand();
       this.ph[i] = this.rand() * 100;
     }
-    this.x = REST_X - 1;
-    this.y = SEABED - 1;
+    this.x = REST_X - 1.71;
+    this.y = SEABED - 1.71;
     this.z = 0;
   }
 
@@ -668,7 +668,7 @@ export class Crab extends Creature {
 
   spawn(): void {
     const side = this.rand() > 0.5 ? 1 : -1;
-    this.x = this.ax + side * 9;
+    this.x = this.ax + side * 15.4;
     this.z = this.az;
     this.y = SEABED;
     this.dir = -side;
@@ -679,7 +679,7 @@ export class Crab extends Creature {
       this.pause -= dt;
       this.vx = damp(this.vx, 0, 6, dt);
     } else {
-      const target = this.wanted ? this.ax : this.ax + (this.x > this.ax ? 30 : -30);
+      const target = this.wanted ? this.ax : this.ax + (this.x > this.ax ? 51.4 : -51.4);
       const far = Math.abs(target - this.x);
       if (this.wanted && far > 3) this.dir = Math.sign(target - this.x);
       else if (this.wanted && this.rand() < dt * 0.15) this.dir = -this.dir;

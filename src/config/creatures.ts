@@ -10,11 +10,11 @@ export interface CreatureInfo {
 }
 
 export const CREATURE_INFO: Record<string, CreatureInfo> = {
-  humpback: {
-    name: '座头鲸',
-    latin: 'Megaptera novaeangliae',
-    desc: '座头鲸是一种须鲸，体长可达 14～16 米。它没有牙齿，而是用嘴里一排排鲸须把海水滤掉，留下磷虾和小鱼。',
-    fact: '座头鲸的胸鳍特别长，几乎有身体的三分之一，像一对巨大的翅膀。',
+  blueWhale: {
+    name: '蓝鲸',
+    latin: 'Balaenoptera musculus',
+    desc: '蓝鲸是地球上有史以来最大的动物，体长可达 24～30 米。它是一种须鲸，没有牙齿，而是用嘴里一排排鲸须把海水滤掉，留下磷虾。',
+    fact: '蓝鲸张一次嘴，吞进的海水和磷虾比它自己的身体还重。',
     group: 'creature',
   },
   krill: {
@@ -26,19 +26,19 @@ export const CREATURE_INFO: Record<string, CreatureInfo> = {
   },
   skull: {
     name: '鲸鱼头骨',
-    desc: '座头鲸的头骨又长又宽，前面长长的部分是上颌，里面曾经挂满了鲸须。头骨上方的开口，是通向喷气孔的鼻孔。',
+    desc: '蓝鲸的头骨又宽又平，前面长长的部分是上颌，里面曾经挂满了黑色的鲸须。头骨上方的小孔，是通向喷气孔的鼻孔。',
     fact: '鲸鱼的鼻孔在漫长的进化中“搬”到了头顶，方便它们一浮出水面就呼吸。',
     group: 'bone',
   },
   mandible: {
     name: '下颌骨',
-    desc: '这对弯弯的长骨头是鲸鱼的下巴。滤食时，下颌张开得很大，喉部像气球一样鼓起，一口就能吞进大量海水。',
-    fact: '须鲸的下颌骨是动物界最大的单块骨骼之一。',
+    desc: '这对弯弯的长骨头是鲸鱼的下巴。滤食时，下颌能张开到将近 90°，喉部像气球一样鼓起，一口就能吞进大量海水。',
+    fact: '蓝鲸的下颌骨长达 6 米多，是动物界最大的单块骨骼。',
     group: 'bone',
   },
   vertebra: {
     name: '脊椎骨',
-    desc: '从脖子到尾巴，座头鲸有五十多块脊椎骨。越靠近尾部，椎骨越小，它们支撑着有力的尾巴上下摆动。',
+    desc: '从脖子到尾巴，蓝鲸有六十多块脊椎骨。越靠近尾部，椎骨越小，它们支撑着有力的尾巴上下摆动。',
     fact: '鲸骨里含有大量油脂，可以在海底慢慢“喂养”生物几十年。',
     group: 'bone',
   },

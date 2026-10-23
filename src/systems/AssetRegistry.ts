@@ -9,12 +9,12 @@ import type { AudioManager } from './AudioManager';
  *
  * {
  *   "textures": { "krill": "sprites/krill.png", "caustic": "fx/caustic.png" },
- *   "audio": { "whaleCall": "audio/humpback-call.mp3", "spout": "audio/spout.mp3" }
+ *   "audio": { "whaleCall": "audio/blue-whale-call.mp3", "spout": "audio/spout.mp3" }
  * }
  *
  * 纹理键见 core/textures.ts 的 TextureSet；音频键见 AudioManager.overrides 的使用处。
- * 鲸鱼、鲸骨等可变形对象的渲染器（Whale / WhaleSkeleton）同样可以整体替换为基于
- * 骨骼动画或分层精灵的实现，只要保持相同的 prepare()/draw() 接口。
+ * 鲸鱼与鲸骨使用 public/assets/whale/ 中的绘画（entities/WhaleArt.ts），沿脊线切成条带绘制；
+ * 换成另一套绘画时，只需保持同一取景并更新 WhaleArt.ts 中的锚点与 WhaleBody.ts 中的轮廓。
  */
 export interface AssetManifest {
   textures?: Partial<Record<keyof TextureSet, string>>;

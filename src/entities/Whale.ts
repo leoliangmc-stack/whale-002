@@ -4,7 +4,7 @@ import { textures } from '../core/textures';
 import type { RenderCtx } from '../core/types';
 import { WORLD } from '../config/stages';
 import { ART_EYE_OFF, ART_H, ART_W, AXIS_ANGLE, AXIS_PX, axisPx, EYE_ART, FIN_PIVOT, FIN_RECT, mipLevel, sAtPx, whaleArt, type Mipped, type WhaleArtSet } from './WhaleArt';
-import { LOWER, LUNGE_LO, LUNGE_UP, S_BLOW, S_EYE, S_FIN, strokeWarp, UPPER, WHALE_LEN, WhaleBody, type WhaleShape } from './WhaleBody';
+import { DORSAL, LOWER, LUNGE_LO, mouthY, rolledHeight, S_BLOW, S_EYE, S_FIN, strokeWarp, UPPER, WHALE_LEN, WhaleBody, type WhaleShape } from './WhaleBody';
 import { WhaleSkeleton } from './WhaleSkeleton';
 
 /** 由叙事时间线求得的鲸鱼状态。 */
@@ -48,6 +48,8 @@ export interface WhaleState {
   finF: number;
   /** 身体的弓形程度 0~1（见 WhaleBody.archAngle）：下沉时头尾从胸腹部垂下的弧线 */
   arc: number;
+  /** 绕体轴的翻身角（弧度，见 WhaleBody.rolledHeight）：下沉时肚子朝上（π），着陆前翻回来 */
+  roll: number;
   /** 画中胸鳍绕根部的转动（弧度，正值向下张开、离开身体，负值向后贴近腹部）：游动时配合转向、上浮与滑行 */
   fin: number;
   /** 鲸鱼下方海床的世界 y（下沉途中海床属于水体参照系，会有偏移；用于尾叶的海床约束与接触阴影） */
@@ -84,6 +86,8 @@ const FIN_S = sAtPx(FIN_RECT[0] + FIN_RECT[2] / 2);
 const SLICES = 84;
 /** 画中离体轴最远的内容（尾叶的叶尖、背鳍）到体轴的距离（画像素），用于估计弯曲时条带之间的缝 */
 const BEND_REACH = 280;
+/** 翻身途中每条带沿横截面分成的块数 */
+const ROLL_BANDS = 6;
 
 export function makeWhaleState(): WhaleState {
   return {
@@ -112,6 +116,7 @@ export function makeWhaleState(): WhaleState {
     finN: 0,
     finF: 0,
     arc: 0,
+    roll: 0,
     fin: 0,
     seabed: WORLD.seabedY,
   };
@@ -141,8 +146,21 @@ const POUCH_A = Math.atan2(2.39 + JAW_OFF, (JAW_S - 0.42) * WHALE_LEN);
 const JAW_BONE = 0.14;
 /** 扇形从下颌上缘之上一点开始（下颌上缘并不是直线，略有拱起；这里是透明的缝隙） */
 const JAW_MARGIN = 0.12;
-/** 画中张角之外再转的角度 */
+/** 画中张角之外再转的角度（张到约 90° 时） */
 const JAW_EXTRA = Math.PI / 3;
+/** 张嘴的画中上下颌的张角（约 30°） */
+const PAINT_GAP = JAW_A - ROSTRUM_A;
+/** 最大张角 */
+const MOUTH_MAX = PAINT_GAP + JAW_EXTRA;
+/**
+ * 游动的画中闭合的嘴线方向（从颌关节指向吻端的唇线，约 3°）：张嘴的画中吻部微微抬起（约 −7.5°），
+ * 合上时把它放到这里，下颌也合到这里，两张画重合
+ */
+const CLOSED_A = Math.atan2(JAW_OFF + mouthY(0.01), (JAW_S - 0.01) * WHALE_LEN);
+/** 吻部扇形的上缘（指向头顶的喷气孔附近）：这里以上的头部不动 */
+const SKULL_A = -1.25;
+/** 吻部扇形的分块数 */
+const FAN_U = 20;
 /** 喉囊展开时向外鼓起的幅度（半径的比例） */
 const POUCH_SWELL = 0.5;
 /** 扇形分块数 */
@@ -189,7 +207,7 @@ export class Whale {
   readonly state: WhaleState = makeWhaleState();
   /** 主动游动的拍尾相位（弧度）：叙事中为 state.phase 加上停下时的悬停轻摆（见 NarrativeScene） */
   phase = 0;
-  private readonly shape: WhaleShape = { swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest: 0, flex: 0, nod: 0, fluke: 0, arc: 0, shrink: 0 };
+  private readonly shape: WhaleShape = { swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest: 0, flex: 0, nod: 0, fluke: 0, arc: 0, roll: 0, shrink: 0 };
   private readonly sh: Shade = makeShade();
   private readonly holes: Hole[] = [];
   private readonly tmp: RGB = [0, 0, 0];
@@ -206,12 +224,15 @@ export class Whale {
   private readonly P4 = { x: 0, y: 0, s: 0 };
   private readonly sh2: Shade = makeShade();
   private readonly slices: Slice[] = [];
+  /** 翻身时一条带的分块边界（横截面上的角度，复用以免每帧分配） */
+  private readonly rollAngles: number[] = [];
   /** 尾叶相对尾柄的偏转（弧度，含静卧时的海床约束） */
   private flukeTurn = 0;
   /** 游动 → 张嘴两张画的过渡（0~1） */
   private gape = 0;
-  /** 下颌在画中张角之外继续下转的程度（0~1） */
-  private jaw = 0;
+  /** 张嘴的画中下颌相对画中位置的转角（弧度，正值向下张开，负值往上合）与吻部下放的角度 */
+  private jawTurn = 0;
+  private rostrumTurn = 0;
   /** 局部绘制变换在屏幕上的包围盒（像素，用于离屏图层裁剪） */
   private bbox = { x0: 0, y0: 0, x1: 0, y1: 0 };
   readonly finPose: FinPose = { ...PAINTED_FIN };
@@ -279,6 +300,7 @@ export class Whale {
     sh.nod = st.nod;
     sh.fluke = st.fluke;
     sh.arc = st.arc;
+    sh.roll = st.roll;
     sh.shrink = 1 - smoothstep(0.0, 1, st.tissue);
     this.body.compute(sh);
     this.flukeFor();
@@ -334,11 +356,16 @@ export class Whale {
     const shrink = this.shape.shrink;
     const fu = 1 - 0.42 * shrink;
     const fl = 1 - 0.3 * shrink;
-    // 张嘴：先过渡到张嘴的画，再继续下转下颌；闭嘴后喉囊仍鼓着，随着海水被挤出才慢慢收回
-    const m = smoothstep(0.02, 0.4, st.mouth);
-    const pouch = Math.max(m, 0.85 * clamp(st.throat));
+    // 张嘴：张角 θ = mouth × 最大张角。张嘴的画按张角变形（见 drawLunge）：比画中小时下颌往上合、吻部往下放，
+    // 合拢时与游动的画重合，所以两张画只在嘴几乎闭上的一瞬间交接，看不出换画；比画中大时下颌继续下转。
+    // 闭嘴后喉囊仍鼓着，随着海水被挤出才慢慢收回
+    const theta = clamp(st.mouth) * MOUTH_MAX;
+    const m = smoothstep(0.004, 0.06, st.mouth);
+    const pouch = Math.max(smoothstep(0.02, 0.4, st.mouth), 0.85 * clamp(st.throat));
     this.gape = m;
-    this.jaw = smoothstep(0.4, 1, st.mouth);
+    const shut = 1 - clamp(theta / PAINT_GAP);
+    this.rostrumTurn = (CLOSED_A - ROSTRUM_A) * shut;
+    this.jawTurn = ROSTRUM_A + this.rostrumTurn + theta - JAW_A;
     const turn = this.flukeTurn;
     const ramp = (s: number) => smoothstep(0.965, 1.04, s);
     const flukeA = smoothstep(0.12, 0.55, st.tissue);
@@ -385,22 +412,21 @@ export class Whale {
       }
       // 竖向：上下两半分别缩放，体轴保持不动
       const sc = clamp(s, 0, 1);
-      const up = sampleProfile(UPPER, sc);
       const lo = sampleProfile(LOWER, sc);
-      let upL = up;
       let loL = lo;
-      let eu = up;
       let el = lo;
+      let es = lo;
       if (sc < 0.44 && pouch > 0) {
-        upL = sampleProfile(LUNGE_UP, sc);
         loL = sampleProfile(LUNGE_LO, sc);
-        eu = up + (upL - up) * m;
         el = lo + (loL - lo) * pouch;
+        // 游动的画（嘴已合上）：下颌尖是硬的骨头，不随喉囊鼓起，只有后面的喉囊鼓着
+        es = lo + (loL - lo) * pouch * smoothstep(0.03, 0.2, sc);
       }
+      // 上半各按自己的轮廓（张嘴的画抬起的吻部由 drawLunge 绕颌关节放下来）；下半随喉囊鼓起。
       // 吻端尖处游动的画非常薄，拉伸倍数设上限（那里本来就几乎是透明的），避免把边缘的半透明像素拉成细线
-      sl.ku = Math.min(5, (fu * eu) / up);
-      sl.kl = Math.min(5, (fl * el) / lo);
-      sl.kuL = (fu * eu) / upL;
+      sl.ku = fu;
+      sl.kl = Math.min(5, (fl * es) / lo);
+      sl.kuL = fu;
       sl.klL = (fl * el) / loL;
       sl.alpha = s > 1 ? flukeA : 1;
       sl.tipFade = 1 - smoothstep(0, 0.6, m) * (1 - smoothstep(0.01, 0.045, s));
@@ -415,7 +441,7 @@ export class Whale {
 
   /** 口腔中心（磷虾被吞入的位置），世界坐标：张开的上下颌之间。 */
   mouthPoint(out: { x: number; y: number }): { x: number; y: number } {
-    const a = (ROSTRUM_A + JAW_A + JAW_EXTRA * this.jaw) / 2;
+    const a = (ROSTRUM_A + this.rostrumTurn + JAW_A + this.jawTurn) / 2;
     const r = 2.6;
     const f = this.body.frame(JAW_S, JAW_OFF, this.f);
     return this.toWorld(f.x + r * Math.cos(f.a + a), f.y + r * Math.sin(f.a + a), out);
@@ -642,19 +668,23 @@ export class Whale {
   }
 
   /**
-   * 张嘴的画。下颌继续下转时，把颌关节下方的扇形区域（下颌与喉囊）单独按扇形分块绘制：
-   * 下颌骨一窄条整体转动，越往后转得越少，到喉囊后缘不转；同时喉囊沿半径方向向外鼓起。
-   * 其余部分仍按条带绘制，并裁掉这块扇形。
+   * 张嘴的画，按当前的张角变形：颌关节下方的扇形（下颌与喉囊）与上方的扇形（吻部）分别按扇形分块绘制。
+   *  - 张得比画中更大时：下颌骨一窄条整体下转，越往后转得越少，到喉囊后缘不转；同时喉囊沿半径方向向外鼓起；
+   *  - 比画中小（正在合上 / 刚刚张开）时：下颌往上合，画中微微抬起的吻部往下放，嘴合拢时与游动的画重合。
+   * 其余部分仍按条带绘制，并裁掉这两块扇形。
    */
   private drawLunge(ctx: CanvasRenderingContext2D, art: Mipped): void {
-    const j = this.jaw;
-    if (j < 0.001) {
+    const jt = this.jawTurn;
+    const rt = this.rostrumTurn;
+    if (Math.abs(jt) < 1e-3 && rt < 1e-3) {
       this.drawSlices(ctx, art, true);
       return;
     }
     const B = ctx.getTransform();
     const f = this.body.frame(JAW_S, JAW_OFF, { x: 0, y: 0, a: 0 });
     const R = 0.45 * WHALE_LEN;
+    const RU = 0.3 * WHALE_LEN;
+    const upper = rt > 1e-3;
     const dir = (a: number) => ({ x: Math.cos(f.a + a), y: Math.sin(f.a + a) });
     // 1. 条带，裁掉扇形（evenodd：大矩形 + 扇形）
     ctx.save();
@@ -666,6 +696,14 @@ export class Whale {
       ctx.lineTo(f.x + d.x * R, f.y + d.y * R);
     }
     ctx.closePath();
+    if (upper) {
+      ctx.moveTo(f.x, f.y);
+      for (let i = 0; i <= 16; i++) {
+        const d = dir(lerp(SKULL_A, ROSTRUM_A + JAW_MARGIN * 0.5, i / 16));
+        ctx.lineTo(f.x + d.x * RU, f.y + d.y * RU);
+      }
+      ctx.closePath();
+    }
     ctx.clip('evenodd');
     this.drawSlices(ctx, art, true);
     ctx.restore();
@@ -683,15 +721,9 @@ export class Whale {
       .translateSelf(-A0.x, -A0.y);
     const local = new DOMMatrix().translateSelf(f.x, f.y).rotateSelf((f.a * 180) / Math.PI);
     const base = B.multiply(local);
-    const span = POUCH_A - (JAW_A + JAW_BONE);
-    const turn = (a: number) => JAW_EXTRA * j * (a <= JAW_A + JAW_BONE ? 1 : 1 - smoothstep(JAW_A + JAW_BONE, POUCH_A, a));
-    const swell = (a: number) => 1 + POUCH_SWELL * j * Math.pow(Math.sin(Math.PI * clamp((a - JAW_A - JAW_BONE) / span)), 1.2);
-    const a0 = JAW_A - JAW_MARGIN;
     // 只取头部（胸鳍之前）的画面
     const x0 = Math.floor(axisPx(0.45, { x: 0, y: 0 }).x);
-    for (let i = 0; i < FAN; i++) {
-      const sa = lerp(a0, POUCH_A, i / FAN);
-      const sb = lerp(a0, POUCH_A, (i + 1) / FAN);
+    const sector = (sa: number, sb: number, turn: (a: number) => number, swell: (a: number) => number, reach: number) => {
       const sc = (sa + sb) / 2;
       const ba = sa + turn(sa);
       const bb = sb + turn(sb);
@@ -705,9 +737,9 @@ export class Whale {
       ctx.beginPath();
       ctx.moveTo(0, 0);
       const e = 0.006;
-      ctx.lineTo(Math.cos(ba - e) * R * 1.6, Math.sin(ba - e) * R * 1.6);
-      ctx.lineTo(Math.cos((ba + bb) / 2) * R * 1.8, Math.sin((ba + bb) / 2) * R * 1.8);
-      ctx.lineTo(Math.cos(bb + e) * R * 1.6, Math.sin(bb + e) * R * 1.6);
+      ctx.lineTo(Math.cos(ba - e) * reach, Math.sin(ba - e) * reach);
+      ctx.lineTo(Math.cos((ba + bb) / 2) * reach * 1.12, Math.sin((ba + bb) / 2) * reach * 1.12);
+      ctx.lineTo(Math.cos(bb + e) * reach, Math.sin(bb + e) * reach);
       ctx.closePath();
       ctx.clip();
       // 分块中心方向上：径向 x 缩放 g 并随切向 y（≈ 半径 × 角度差）线性变化，切向按 g·k 展开
@@ -718,6 +750,20 @@ export class Whale {
       ctx.setTransform(base.multiply(fan).multiply(head));
       ctx.drawImage(img, x0 * r, 0, (ART_W - x0) * r, ART_H * r, x0, 0, ART_W - x0, ART_H);
       ctx.restore();
+    };
+    // 下颌与喉囊
+    const span = POUCH_A - (JAW_A + JAW_BONE);
+    const open = Math.max(0, jt) / JAW_EXTRA;
+    const turn = (a: number) => jt * (a <= JAW_A + JAW_BONE ? 1 : 1 - smoothstep(JAW_A + JAW_BONE, POUCH_A, a));
+    const swell = (a: number) => 1 + POUCH_SWELL * open * Math.pow(Math.sin(Math.PI * clamp((a - JAW_A - JAW_BONE) / span)), 1.2);
+    const a0 = JAW_A - JAW_MARGIN;
+    for (let i = 0; i < FAN; i++) sector(lerp(a0, POUCH_A, i / FAN), lerp(a0, POUCH_A, (i + 1) / FAN), turn, swell, R * 1.6);
+    // 吻部：靠近嘴唇的部分整体下放，往头顶（喷气孔）方向渐渐不动
+    if (upper) {
+      const a1 = ROSTRUM_A + JAW_MARGIN * 0.5;
+      const turnU = (a: number) => rt * smoothstep(SKULL_A, ROSTRUM_A - 0.35, a);
+      const none = () => 1;
+      for (let i = 0; i < FAN_U; i++) sector(lerp(SKULL_A, a1, i / FAN_U), lerp(SKULL_A, a1, (i + 1) / FAN_U), turnU, none, RU * 1.6);
     }
     ctx.setTransform(B);
   }
@@ -735,45 +781,153 @@ export class Whale {
     const A = this.q;
     const base = ctx.globalAlpha;
     const sls = this.slices;
+    // 翻身：转动途中按横截面分块重新排布每一条带；完全翻过来（肚子朝上）时，整幅画沿体轴上下翻转
+    const rho = this.shape.roll;
+    const rolling = rho > 1e-3 && rho < Math.PI - 1e-3;
+    const flip = rho >= Math.PI - 1e-3;
+    const sgn = flip ? -1 : 1;
+    // 翻身途中轮廓由各条带的分块拼成，边缘会有台阶：身体（吻端到尾叶缺刻）按转动后平滑的轮廓裁剪，
+    // 缺刻之后沿尾柄方向留出一大块，尾叶的条带不裁
+    let clipped = false;
+    if (rolling) {
+      const b = this.body;
+      const n = b.n;
+      const tx = b.px[n - 1] - b.px[n - 3];
+      const ty = b.py[n - 1] - b.py[n - 3];
+      const tl = Math.hypot(tx, ty) || 1;
+      const ex = (tx / tl) * 4;
+      const ey = (ty / tl) * 4;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(b.ux[0], b.uy[0]);
+      for (let i = 1; i < n; i++) ctx.lineTo(b.ux[i], b.uy[i]);
+      ctx.lineTo(b.ux[n - 1] + b.nx[n - 1] * 6 + ex, b.uy[n - 1] + b.ny[n - 1] * 6 + ey);
+      ctx.lineTo(b.bx[n - 1] - b.nx[n - 1] * 6 + ex, b.by[n - 1] - b.ny[n - 1] * 6 + ey);
+      for (let i = n - 1; i >= 0; i--) ctx.lineTo(b.bx[i], b.by[i]);
+      ctx.closePath();
+      ctx.clip();
+      clipped = true;
+    }
     for (let j = 0; j < sls.length; j++) {
       const sl = sls[j];
       const al = sl.alpha * (lunge ? 1 : sl.tipFade);
       if (al <= 0.002) continue;
       ctx.globalAlpha = base * al;
       // 相邻条带重叠 1 像素，避免接缝处的发丝缝；身体弯曲时，外凸一侧的条带之间会张开楔形的缝，
-      // 所以每条带再向尾部（下一条带，之后绘制并盖住重叠处）多延伸一些，延伸量随相邻条带的夹角增加
-      const next = j + 1 < sls.length ? sls[j + 1] : sl;
+      // 所以每条带再向尾部（下一条带，之后绘制并盖住重叠处）多延伸一些，延伸量随相邻条带的夹角增加。
+      // 翻身途中每条带要分成好几块，这时把相邻两条合成一条绘制（弯曲很平缓，看不出差别；
+      // 头部的轮廓变化太快，不合并）
+      const pair = rolling && sl.s > 0.12 && j + 1 < sls.length && sls[j + 1].s <= 1;
+      const next = sls[Math.min(sls.length - 1, j + (pair ? 2 : 1))];
       const da = next.a - sl.a;
-      const ext = Math.min(16, Math.ceil(Math.abs(da) * BEND_REACH));
-      const x0 = Math.max(0, sl.x0 - 1);
+      const ext = Math.min(pair ? 24 : 16, Math.ceil(Math.abs(da) * BEND_REACH));
+      const x0 = Math.max(0, (pair ? sls[j + 1].x0 : sl.x0) - 1);
       const x1 = Math.min(ART_W, sl.x1 + 1);
+      if (pair) j++;
       axisPx(sl.s, A);
       const ku = lunge ? sl.kuL : sl.ku;
       const kl = lunge ? sl.klL : sl.kl;
-      if (ext <= 0 && Math.abs(ku - 1) < 1e-3 && Math.abs(kl - 1) < 1e-3) {
-        this.sliceTransform(ctx, B, sl, A, 1, mpp, ct, stt);
+      if (clipped && sl.s > 1) {
+        ctx.restore();
+        clipped = false;
+      }
+      if (rolling) {
+        this.drawRolledSlice(ctx, B, sl, A, img, r, Math.max(0, x0 - ext), x1, ku, kl, mpp, ct, stt, rho);
+      } else if (ext <= 0 && Math.abs(ku - 1) < 1e-3 && Math.abs(kl - 1) < 1e-3) {
+        this.sliceTransform(ctx, B, sl, A, sgn, mpp, ct, stt);
         ctx.drawImage(img, x0 * r, 0, (x1 - x0) * r, ART_H * r, x0, 0, x1 - x0, ART_H);
       } else {
         // 体轴上下两半分别绘制（张嘴、分解时各自缩放），在体轴处重叠 1 像素；
-        // 只有外凸的一半向尾部延伸（向尾部越来越向下弯时，外凸的是背侧）
+        // 只有外凸的一半向尾部延伸（向尾部越来越向下弯时，外凸的是画面上方的一半：平常是背侧，翻过来时是腹侧）
         const ya = Math.ceil(A.y) + 1;
         const yb = Math.floor(A.y) - 1;
-        const xu = da < 0 ? Math.max(0, x0 - ext) : x0;
-        const xl = da > 0 ? Math.max(0, x0 - ext) : x0;
-        this.sliceTransform(ctx, B, sl, A, ku, mpp, ct, stt);
+        const xu = (flip ? da > 0 : da < 0) ? Math.max(0, x0 - ext) : x0;
+        const xl = (flip ? da < 0 : da > 0) ? Math.max(0, x0 - ext) : x0;
+        this.sliceTransform(ctx, B, sl, A, ku * sgn, mpp, ct, stt);
         ctx.drawImage(img, xu * r, 0, (x1 - xu) * r, ya * r, xu, 0, x1 - xu, ya);
-        if (Math.abs(kl - ku) >= 1e-3) this.sliceTransform(ctx, B, sl, A, kl, mpp, ct, stt);
+        if (Math.abs(kl - ku) >= 1e-3) this.sliceTransform(ctx, B, sl, A, kl * sgn, mpp, ct, stt);
         ctx.drawImage(img, xl * r, yb * r, (x1 - xl) * r, (ART_H - yb) * r, xl, yb, x1 - xl, ART_H - yb);
       }
     }
+    if (clipped) ctx.restore();
     ctx.globalAlpha = base;
     ctx.setTransform(B);
   }
 
-  /** 胸鳍的转动（弧度）。滤食时（张嘴的画、鼓起的喉囊）与分解、静卧时身体会变形，这些时候胸鳍保持原位。 */
+  /**
+   * 翻身途中的一条带：沿横截面从下缘的轮廓点经朝向镜头的一面到上缘，分成若干块，
+   * 每块是画中体轴上方或下方的一段（sin φ 决定画中的高度），按转动后的高度线性排布。
+   * 越过腹中线（或背脊）之后看到的是远侧的一面，用同一段画上下翻过来代替（左右对称）。
+   */
+  private drawRolledSlice(
+    ctx: CanvasRenderingContext2D,
+    B: DOMMatrix,
+    sl: Slice,
+    A: { x: number; y: number },
+    img: CanvasImageSource,
+    r: number,
+    x0: number,
+    x1: number,
+    ku: number,
+    kl: number,
+    mpp: number,
+    ct: number,
+    stt: number,
+    rho: number,
+  ): void {
+    const s = clamp(sl.s, 0, 1);
+    const upM = sampleProfile(UPPER, s);
+    const loM = sampleProfile(LOWER, s);
+    const U = upM * ku;
+    const L = loM * kl;
+    const W = sampleProfile(DORSAL, s);
+    const p0 = -Math.PI / 2 - rho;
+    const p1 = Math.PI / 2 - rho;
+    const ph = this.rollAngles;
+    ph.length = 0;
+    for (let i = 0; i <= ROLL_BANDS; i++) ph.push(lerp(p0, p1, i / ROLL_BANDS));
+    // 画中高度的转折点（腹中线、背脊、体侧中线）也作为分块边界，块内的映射才是单调的
+    for (let q = -2; q <= 1; q++) {
+      const a = (q * Math.PI) / 2;
+      if (a > p0 + 1e-3 && a < p1 - 1e-3) ph.push(a);
+    }
+    ph.sort((a, b) => a - b);
+    // 画中离体轴的距离（画像素，向下为正）。截面上的点先折回近侧（远侧与近侧左右对称），
+    // 画中的相对高度在正侧面时是 sin φ；转到一半时改为按角度均匀取画，否则正对镜头的腹中线附近
+    // 只剩画的外缘（半透明的轮廓）被拉成一大片。截面内部不用画的最外缘，两端仍是身体的轮廓时则延伸到外缘之外，保留柔和的边
+    const even = smoothstep(0.1, 0.6, Math.sin(rho));
+    const artW = (phi: number, edge: boolean): number => {
+      const u = phi > Math.PI / 2 ? Math.PI - phi : phi < -Math.PI / 2 ? -Math.PI - phi : phi;
+      const v = lerp(Math.sin(u), u / (Math.PI / 2), even);
+      const lim = edge && Math.abs(v) > 0.9 ? 1.08 : 0.95;
+      const c = clamp(v, -lim, lim);
+      return c >= 0 ? (-c * upM) / mpp : (-c * loM) / mpp;
+    };
+    for (let i = 0; i + 1 < ph.length; i++) {
+      const pa = ph[i];
+      const pb = ph[i + 1];
+      const wa = artW(pa, i === 0);
+      let wb = artW(pb, i + 2 === ph.length);
+      // 只剩一两行画的分块（转折点紧挨着画的外缘）：取一小段画拉开，宁可有一点拖影也不留缝
+      if (Math.abs(wb - wa) < 3) wb = wa + (wb >= wa ? 3 : -3);
+      // 局部坐标中沿法线向下的距离；最外侧的两块再向外多铺一点，由平滑的轮廓裁掉
+      let da = -rolledHeight(pa, rho, U, L, W);
+      let db = -rolledHeight(pb, rho, U, L, W);
+      if (i === 0) da += 0.15 * Math.max(U, L, W) + 0.1;
+      if (i + 2 === ph.length) db -= 0.15 * Math.max(U, L, W) + 0.1;
+      const ky = (db - da) / ((wb - wa) * mpp);
+      this.sliceTransform(ctx, B, sl, A, ky, mpp, ct, stt, da - ky * mpp * wa);
+      const ya = Math.floor(A.y + Math.min(wa, wb)) - 1;
+      const yb = Math.ceil(A.y + Math.max(wa, wb)) + 1;
+      ctx.drawImage(img, x0 * r, ya * r, (x1 - x0) * r, (yb - ya) * r, x0, ya, x1 - x0, yb - ya);
+    }
+  }
+
+  /** 胸鳍的转动（弧度）。滤食时（张嘴的画、鼓起的喉囊）、翻身、分解与静卧时身体会变形，这些时候胸鳍保持原位。 */
   private finTurn(): number {
     const st = this.state;
     if (Math.abs(st.fin) < 1e-4 || this.gape > 0.001 || st.throat > 0.001 || st.tissue < 0.999 || st.rest > 0) return 0;
+    if (st.roll > 1e-3 && st.roll < Math.PI - 1e-3) return 0;
     return st.fin;
   }
 
@@ -786,7 +940,9 @@ export class Whale {
     const r = 1 / (1 << lv);
     const f = this.body.frame(FIN_S, 0, this.f);
     const A = axisPx(FIN_S, this.q);
-    this.sliceTransform(ctx, B, { px: f.x, py: f.y, a: f.a }, A, 1, mpp, Math.cos(AXIS_ANGLE), Math.sin(AXIS_ANGLE));
+    // 肚子朝上时整幅画上下翻转，胸鳍图层随之翻转
+    const sgn = this.shape.roll >= Math.PI - 1e-3 ? -1 : 1;
+    this.sliceTransform(ctx, B, { px: f.x, py: f.y, a: f.a }, A, sgn, mpp, Math.cos(AXIS_ANGLE), Math.sin(AXIS_ANGLE));
     // 画框与局部坐标的 y 轴都向下：画面上逆时针（张开）是负的旋转角
     ctx.translate(FIN_PIVOT.x, FIN_PIVOT.y);
     ctx.rotate(-turn);
@@ -806,6 +962,7 @@ export class Whale {
     mpp: number,
     ct: number,
     stt: number,
+    off = 0,
   ): void {
     const cf = Math.cos(sl.a);
     const sf = Math.sin(sl.a);
@@ -813,8 +970,9 @@ export class Whale {
     const c = mpp * (cf * stt - ky * sf * ct);
     const b = mpp * (sf * ct - ky * cf * stt);
     const d = mpp * (sf * stt + ky * cf * ct);
-    const e = sl.px - (a * A.x + c * A.y);
-    const f = sl.py - (b * A.x + d * A.y);
+    // off：体轴处再沿法线向下平移（米），翻身时每块画的位置
+    const e = sl.px - (a * A.x + c * A.y) - off * sf;
+    const f = sl.py - (b * A.x + d * A.y) + off * cf;
     ctx.setTransform(B.a * a + B.c * b, B.b * a + B.d * b, B.a * c + B.c * d, B.b * c + B.d * d, B.a * e + B.c * f + B.e, B.b * e + B.d * f + B.f);
   }
 
@@ -831,13 +989,29 @@ export class Whale {
     if (a <= 0.01) return;
     const size = EYE_ART.sizeOfLen * WHALE_LEN;
     const px = size / EYE_ART.w;
-    this.body.frame(S_EYE, ART_EYE_OFF * WHALE_LEN, this.f);
+    // 翻身：眼睛随横截面转到新的高度，转到轮廓边上时被压扁、淡去；翻过来之后是远侧的眼睛（上下翻转）
+    const rho = st.roll;
+    let off = ART_EYE_OFF * WHALE_LEN;
+    let sy = 1;
+    let fade = 1;
+    if (rho > 1e-3) {
+      const U = sampleProfile(UPPER, S_EYE);
+      const L = sampleProfile(LOWER, S_EYE);
+      const v = clamp(off >= 0 ? off / U : off / L, -1, 1);
+      const near = Math.cos(rho) >= 0;
+      const phi = near ? Math.asin(v) : Math.PI - Math.asin(v);
+      off = rolledHeight(phi, rho, U, L, sampleProfile(DORSAL, S_EYE));
+      sy = Math.cos(rho);
+      fade = smoothstep(0.2, 0.45, Math.abs(sy));
+    }
+    if (a * fade <= 0.01) return;
+    this.body.frame(S_EYE, off, this.f);
     ctx.save();
     ctx.translate(this.f.x, this.f.y);
     ctx.rotate(this.f.a - AXIS_ANGLE);
-    ctx.scale(px, px);
+    ctx.scale(px, px * sy);
     ctx.translate(-EYE_ART.px, -EYE_ART.py);
-    ctx.globalAlpha = a;
+    ctx.globalAlpha = a * fade;
     ctx.drawImage(art.eyeOpen, 0, 0);
     if (e < 0.999) {
       // 屏幕上眼睛有多大，就用多大的图层（最多原画尺寸）

@@ -129,8 +129,8 @@ export interface StoryFrame {
 
 // --------------------------------------------------------------- 鲸鱼谱系轨道（定义域 u ∈ [−0.13, 0.88]）
 
-type DescentField = 'beat' | 'beatPh' | 'flex' | 'nod' | 'fluke' | 'finN' | 'finF' | 'arc' | 'fin';
-const DESCENT_FIELDS: DescentField[] = ['beat', 'beatPh', 'flex', 'nod', 'fluke', 'finN', 'finF', 'arc', 'fin'];
+type DescentField = 'beat' | 'beatPh' | 'flex' | 'nod' | 'fluke' | 'finN' | 'finF' | 'arc' | 'roll' | 'fin';
+const DESCENT_FIELDS: DescentField[] = ['beat', 'beatPh', 'flex', 'nod', 'fluke', 'finN', 'finF', 'arc', 'roll', 'fin'];
 
 const whaleKeys: Record<keyof Omit<WhaleState, 'visible' | 'seabed' | 'phase' | DescentField>, Keys> = {
   // 开场：从远处缓缓游来（约 3.3 m/s，蓝鲸的巡游速度），接近磷虾群时减速。

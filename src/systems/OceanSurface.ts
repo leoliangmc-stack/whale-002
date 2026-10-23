@@ -3,7 +3,7 @@ import { clamp, hash1, lerp, sampleProfile, smoothstep, TAU } from '../core/math
 import { textures } from '../core/textures';
 import type { RenderCtx } from '../core/types';
 import type { SurfaceState } from './StoryTimeline';
-import { S_BLOW, S_REF, WHALE_LEN } from '../entities/WhaleBody';
+import { DORSAL, S_BLOW, S_REF, WHALE_LEN } from '../entities/WhaleBody';
 
 /**
  * 海面：
@@ -12,13 +12,6 @@ import { S_BLOW, S_REF, WHALE_LEN } from '../entities/WhaleBody';
  *  - 高空俯视镜头：广阔海面、浮出水面的鲸鱼、扩散的水波与第一次呼气。
  */
 
-/** 俯视的蓝鲸：身体半宽（米），量自 whale-kit 的腹面画（俯视与仰视的轮廓相同） */
-const DORSAL: ReadonlyArray<readonly [number, number]> = [
-  [0, 0.3], [0.02, 1.16], [0.04, 1.46], [0.065, 1.71], [0.09, 1.86], [0.11, 1.94], [0.13, 2.06], [0.15, 2.16],
-  [0.2, 2.24], [0.24, 2.38], [0.3, 2.45], [0.38, 2.51], [0.42, 2.53], [0.46, 2.48], [0.51, 2.44], [0.55, 2.42],
-  [0.6, 2.3], [0.66, 2.03], [0.71, 1.94], [0.75, 1.64], [0.8, 1.35], [0.84, 1.21], [0.88, 0.87], [0.93, 0.69],
-  [0.97, 0.58], [1, 0.5],
-];
 
 const SKY_TOP = hex('#5aa6d8');
 const SKY_HOR = hex('#cfeaf5');

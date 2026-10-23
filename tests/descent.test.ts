@@ -4,7 +4,8 @@ import { CONTACT_P, DESCENT_END, DESCENT_START, DescentMotion, lowestBelow } fro
 import { StoryTimeline, Y_REST } from '../src/systems/StoryTimeline';
 import { LightingManager } from '../src/systems/LightingManager';
 import { Camera } from '../src/core/Camera';
-import { WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
+import { DORSAL, LOWER, UPPER, WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
+import { sampleProfile } from '../src/core/math';
 
 const tl = new StoryTimeline();
 const d = tl.descent;
@@ -15,7 +16,7 @@ const body = new WhaleBody();
 /** 按进度 p 的姿态计算身体几何（含弓形与被动弯曲） */
 function shape(p: number): WhaleBody {
   const w = whale(p);
-  body.compute({ swim: 0, phase: 0, beat: w.beat, beatPh: w.beatPh, mouth: 0, throat: 0, rest: w.rest, flex: w.flex, nod: w.nod, fluke: w.fluke, arc: w.arc, shrink: 0 });
+  body.compute({ swim: 0, phase: 0, beat: w.beat, beatPh: w.beatPh, mouth: 0, throat: 0, rest: w.rest, flex: w.flex, nod: w.nod, fluke: w.fluke, arc: w.arc, roll: w.roll, shrink: 0 });
   return body;
 }
 
@@ -324,19 +325,58 @@ describe('descent: a graceful, quiet drift into the deep', () => {
     }
   });
 
-  it('the pectoral fins spread naturally and sway a little, back in the painted pose before touchdown', () => {
-    let lo = Infinity;
-    let hi = -Infinity;
-    for (let p = 0.36; p <= 0.46; p += 2e-4) {
-      const f = whale(p).fin;
-      lo = Math.min(lo, f);
-      hi = Math.max(hi, f);
+  it('the pectoral fins sway in the flow, hang down while belly-up, and are back in the painted pose before touchdown', () => {
+    const range = (p0: number, p1: number) => {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let p = p0; p <= p1; p += 2e-4) {
+        const f = whale(p).fin;
+        lo = Math.min(lo, f);
+        hi = Math.max(hi, f);
+      }
+      return { lo, hi };
+    };
+    // 翻身之前：随水流张开
+    const before = range(0.3, 0.315);
+    expect(before.lo).toBeGreaterThan(0.02);
+    expect(before.hi).toBeLessThan(0.3);
+    // 肚子朝上：垂向后下方，仍随水流轻轻摆动
+    const up = range(0.38, 0.42);
+    expect(up.lo).toBeGreaterThan(-2.6);
+    expect(up.hi).toBeLessThan(-1.8);
+    expect(up.hi - up.lo).toBeGreaterThan(0.03);
+    // 翻身途中胸鳍画在身体里（转动为 0），交接处没有跳变
+    for (let p = 0.3; p < CONTACT_P; p += 2e-4) {
+      const a = whale(p);
+      if (a.roll > 1e-3 && a.roll < Math.PI - 1e-3) expect(a.fin, `p=${p.toFixed(4)}`).toBe(0);
+      expect(Math.abs(whale(p + 2e-4).fin - a.fin), `p=${p.toFixed(4)}`).toBeLessThan(0.05);
     }
-    expect(lo).toBeGreaterThan(0.08);
-    expect(hi).toBeLessThan(0.3);
-    expect(hi - lo).toBeGreaterThan(0.03);
     expect(Math.abs(whale(DESCENT_START + 1e-4).fin)).toBeLessThan(0.01);
     expect(whale(CONTACT_P).fin).toBe(0);
+  });
+
+  it('rolls belly-up like the reference painting, and back upright before touching down', () => {
+    expect(whale(0.316).roll).toBe(0);
+    for (let p = 0.36; p <= 0.43; p += 0.005) expect(whale(p).roll, `p=${p.toFixed(3)}`).toBeCloseTo(Math.PI, 3);
+    expect(whale(0.485).roll).toBeLessThan(0.02);
+    expect(whale(CONTACT_P).roll).toBe(0);
+    // 转动缓慢：最快约 30°/s，整个翻身用十几秒
+    const s = sweep(0.31, CONTACT_P);
+    for (let i = 1; i < s.length; i++) {
+      const w = Math.abs(whale(s[i].p).roll - whale(s[i - 1].p).roll) / (s[i].t - s[i - 1].t);
+      expect(w, `p=${s[i].p.toFixed(4)}`).toBeLessThan(0.55);
+    }
+    expect(secondsAt(first(0.31, 0.4, (p) => whale(p).roll > Math.PI - 0.05)) - secondsAt(first(0.31, 0.4, (p) => whale(p).roll > 0.05))).toBeGreaterThan(10);
+    // 肚子朝上时，侧视轮廓的上缘是腹部、下缘是背部；转到一半时看到的是腹面（上下对称、比侧面略宽）
+    const b = new WhaleBody();
+    const shapeAt = (roll: number) => b.compute({ swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest: 0, flex: 0, nod: 0, fluke: 0, arc: 0, roll, shrink: 0 });
+    shapeAt(Math.PI);
+    const i = b.indexAt(0.4);
+    expect(b.up[i]).toBeCloseTo(sampleProfile(LOWER, b.s[i]), 2);
+    expect(b.lo[i]).toBeCloseTo(sampleProfile(UPPER, b.s[i]), 2);
+    shapeAt(Math.PI / 2);
+    expect(b.up[i]).toBeCloseTo(b.lo[i], 2);
+    expect(b.up[i]).toBeCloseTo(sampleProfile(DORSAL, b.s[i]), 1);
   });
 
   it('drifts a little forward along its lowered head, but it is sinking, not swimming down', () => {

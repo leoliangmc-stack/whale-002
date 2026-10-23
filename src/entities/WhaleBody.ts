@@ -117,6 +117,15 @@ export const LOWER: Profile = [
 
 export const LOWER_MAX = 2.422;
 
+/** 俯视的蓝鲸：身体半宽（米），量自 whale-kit 的腹面画（俯视与仰视的轮廓相同） */
+export const DORSAL: ReadonlyArray<readonly [number, number]> = [
+  [0, 0.3], [0.02, 1.16], [0.04, 1.46], [0.065, 1.71], [0.09, 1.86], [0.11, 1.94], [0.13, 2.06], [0.15, 2.16],
+  [0.2, 2.24], [0.24, 2.38], [0.3, 2.45], [0.38, 2.51], [0.42, 2.53], [0.46, 2.48], [0.51, 2.44], [0.55, 2.42],
+  [0.6, 2.3], [0.66, 2.03], [0.71, 1.94], [0.75, 1.64], [0.8, 1.35], [0.84, 1.21], [0.88, 0.87], [0.93, 0.69],
+  [0.97, 0.58], [1, 0.5],
+];
+
+
 /**
  * 张嘴滤食的那张画在头部的轮廓（米，脊线上方 / 下方）：吻部微微抬起，下颌落下，
  * 喉腹褶像气球一样鼓起，一直到胸鳍前方（s ≈ 0.44 之后与游动的画相同）。
@@ -286,6 +295,33 @@ export function archAngle(s: number): number {
   return ARCH_HEAD * t * t * (3 - 2 * t);
 }
 
+// ------------------------------------------------------------------ 翻身（绕体轴转动）
+// 侧视的画只画了近侧的一面。身体绕体轴转动 ρ 时，把横截面看成上半径 U、下半径 L、半宽 W 的近似椭圆：
+// 截面上角度 φ 的表面点（sin φ 就是它在画中离体轴的相对高度，近侧 cos φ > 0）转到
+//   高度 h′ = R(φ)·sin φ·cos ρ + W·cos φ·sin ρ，朝向镜头的深度 z′ = W·cos φ·cos ρ − R(φ)·sin φ·sin ρ。
+// ρ 为正时腹部先转向镜头（转到一半时看到的是腹面），ρ = π 时肚子朝上，看到的是远侧的一面——
+// 左右对称，就是把画沿体轴上下翻过来。
+
+/** 横截面上 φ 处的点转动 ρ 之后的高度（米，正值向背侧 / 上方） */
+export function rolledHeight(phi: number, rho: number, U: number, L: number, W: number): number {
+  const s = Math.sin(phi);
+  return (s >= 0 ? U : L) * s * Math.cos(rho) + W * Math.cos(phi) * Math.sin(rho);
+}
+
+/** 转动 ρ 之后横截面在侧视中的上下范围（米，都为正值）：沿截面取样求最高与最低点 */
+export function rolledExtent(rho: number, U: number, L: number, W: number, out: { top: number; bot: number }): { top: number; bot: number } {
+  let top = -Infinity;
+  let bot = Infinity;
+  for (let k = 0; k < 32; k++) {
+    const h = rolledHeight((k / 32) * Math.PI * 2 - Math.PI, rho, U, L, W);
+    if (h > top) top = h;
+    if (h < bot) bot = h;
+  }
+  out.top = top;
+  out.bot = -bot;
+  return out;
+}
+
 export interface WhaleShape {
   /** 尾鳍摆动幅度 0~1（氛围时钟驱动的主动游动） */
   swim: number;
@@ -305,6 +341,8 @@ export interface WhaleShape {
   fluke: number;
   /** 身体的弓形程度 0~1（见 archAngle）：下沉时失去肌张力后，头尾从胸腹部垂下的弧线 */
   arc: number;
+  /** 绕体轴的翻身角（弧度，见 rolledHeight）：0 背部朝上，π 肚子朝上 */
+  roll: number;
   /** 软组织收缩（分解）0~1 */
   shrink: number;
 }
@@ -336,6 +374,7 @@ export class WhaleBody {
   readonly mly: Float32Array;
   hingeX = 0;
   hingeY = 0;
+  private readonly ext = { top: 0, bot: 0 };
   jawAngle = 0;
   tailAngle = 0;
   flukeAngle = 0;
@@ -456,6 +495,15 @@ export class WhaleBody {
       up[i] = u;
       lo[i] = l;
       this.rl[i] = restRoll(si, sh.rest);
+    }
+    // 翻身：轮廓换成转动后横截面的上下范围（肚子朝上时，上缘是腹部）
+    if (sh.roll !== 0) {
+      const e = this.ext;
+      for (let i = 0; i < n; i++) {
+        rolledExtent(sh.roll, up[i], lo[i], sampleProfile(DORSAL, s[i]), e);
+        up[i] = e.top;
+        lo[i] = e.bot;
+      }
     }
 
     // 颌关节与张嘴

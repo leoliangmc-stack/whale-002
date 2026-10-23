@@ -24,6 +24,12 @@ export interface Wake {
   /** 相对水体的速度（m/s） */
   vx: number;
   vy: number;
+  /** 尾叶推水：尾叶中部的世界位置与它相对身体的速度（m/s，主要是上下拍动），以及强度 */
+  flukeX: number;
+  flukeY: number;
+  flukeVx: number;
+  flukeVy: number;
+  flukeAmt: number;
 }
 
 const SNOW_MAX = 300;
@@ -45,7 +51,8 @@ export class ParticleManager {
   /** 水体在世界中的累计偏移（米）：只有镜头相对水体的移动才让颗粒产生视差 */
   waterX = 0;
   waterY = 0;
-  readonly wake: Wake = { amt: 0, x: 0, y: 0, z: 0, pitch: 0, vx: 0, vy: 0 };
+  readonly wake: Wake = { amt: 0, x: 0, y: 0, z: 0, pitch: 0, vx: 0, vy: 0, flukeX: 0, flukeY: 0, flukeVx: 0, flukeVy: 0, flukeAmt: 0 };
+  private readonly fp = { x: 0, y: 0, s: 0 };
   private readonly wp = { x: 0, y: 0, s: 0 };
 
   constructor() {
@@ -138,6 +145,24 @@ export class ParticleManager {
         trail = wk.amt * Math.min(eb * 0.5, sp * 0.5 * P.s);
       }
     }
+    // 尾叶推水：尾叶附近的颗粒顺着尾叶的拍动被推开一点，并带一点旋涡（屏幕像素）
+    let fOn = false;
+    let fcx = 0;
+    let fcy = 0;
+    let fr = 1;
+    let fdx = 0;
+    let fdy = 0;
+    if (!near && wk.flukeAmt > 0.01 && cam.project(wk.flukeX, wk.flukeY, wk.z, this.fp)) {
+      fOn = true;
+      fcx = this.fp.x;
+      fcy = this.fp.y;
+      fr = 3.4 * this.fp.s;
+      // 约 0.45 秒的位移，不超过半径的 0.3 倍
+      const k = wk.flukeAmt * 0.45 * this.fp.s;
+      const lim = fr * 0.3;
+      fdx = Math.max(-lim, Math.min(lim, wk.flukeVx * k));
+      fdy = Math.max(-lim, Math.min(lim, wk.flukeVy * k));
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalCompositeOperation = 'lighter';
     for (let i = 0; i < n; i++) {
@@ -176,9 +201,25 @@ export class ParticleManager {
           }
         }
       }
+      if (fOn && k > 0.6) {
+        const kz = (k - 1) / 0.32;
+        const lw = Math.exp(-kz * kz);
+        const dx = (x - fcx) / fr;
+        const dy = (y - fcy) / fr;
+        const r2 = dx * dx + dy * dy;
+        if (r2 < 4 && lw > 0.05) {
+          const g = Math.exp(-r2 * 1.6) * lw;
+          // 旋涡：尾叶两侧的水向相反方向偏转
+          const sw = 0.55 * Math.sign(dx * fdy - dy * fdx);
+          x += (fdx - sw * fdy) * g;
+          y += (fdy + sw * fdx) * g;
+        }
+      }
       if (y < clipTop) continue;
-      const s = this.size[i] * (isNear ? k * 2.2 : 0.8 + k * 1.6) * Math.min(1.6, Math.max(0.6, cam.ppm / 30));
-      const a = (isNear ? 0.16 : 0.12 + 0.3 * Math.min(1, k)) * lum * speedFade;
+      // 漂进光束里的颗粒被照亮
+      const lit = 1 + Math.min(1.2, 7 * rc.light.rayLightAt(x, y));
+      const s = this.size[i] * (isNear ? k * 2.2 : 0.8 + k * 1.6) * Math.min(1.6, Math.max(0.6, cam.ppm / 30)) * (0.85 + 0.15 * lit);
+      const a = (isNear ? 0.16 : 0.12 + 0.3 * Math.min(1, k)) * lum * speedFade * lit;
       ctx.globalAlpha = a;
       const sl = s + streak * k;
       ctx.drawImage(tex, x - s, y - sl, s * 2, sl * 2);

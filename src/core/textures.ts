@@ -265,19 +265,26 @@ export function sedimentTile(size = 128, seed = 9): Tex {
   return c;
 }
 
-/** 光束：横向高斯衰减、纵向渐隐的柔和光柱。 */
 function smoothstep01(t: number): number {
   return t * t * (3 - 2 * t);
 }
 
-export function rayTexture(w = 64, h = 256): Tex {
+/** 扇形光束底部与顶部的宽度比 */
+export const FAN_SPREAD = 2.1;
+
+/**
+ * 光束：上窄下宽的柔和光柱，每一行都是同样的高斯横截面，宽度从顶部的 1/FAN_SPREAD 线性增加到底部的整幅；
+ * 沿长度渐隐。纹理宽度对应光束底部的宽度。
+ */
+export function rayTexture(w = 128, h = 256): Tex {
   const [c, ctx] = makeCanvas(w, h);
   const img = ctx.createImageData(w, h);
   for (let y = 0; y < h; y++) {
     const v = y / (h - 1);
     const fadeV = Math.pow(1 - v, 1.6) * smoothstep01(Math.min(1, v * 6));
+    const f = (1 + (FAN_SPREAD - 1) * v) / FAN_SPREAD;
     for (let x = 0; x < w; x++) {
-      const u = (x / (w - 1)) * 2 - 1;
+      const u = ((x / (w - 1)) * 2 - 1) / f;
       const a = Math.exp(-u * u * 3.2) * fadeV;
       const i = (y * w + x) * 4;
       img.data[i] = 255;

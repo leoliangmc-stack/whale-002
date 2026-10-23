@@ -38,7 +38,6 @@ export class ExploreScene {
     const edt = world.ecology.tick(dt, true);
     const w1 = world.whale1;
     world.ecology.exploreState(world.timeline, w1.state);
-    w1.update(0, 0);
     w1.prepare();
     world.whale2.state.visible = 0;
     camera.updateExplore(dt);

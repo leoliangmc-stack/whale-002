@@ -1,5 +1,5 @@
 import type { ShotParams } from '../core/Camera';
-import { clamp, smoothstep, window4 } from '../core/math';
+import { clamp, damp, smoothstep, TAU, window4 } from '../core/math';
 import type { RenderCtx } from '../core/types';
 import type { CameraController } from '../controllers/CameraController';
 import { StoryProgressController } from '../controllers/StoryProgressController';
@@ -8,6 +8,8 @@ import { DescentMotion } from '../systems/DescentMotion';
 import { WORLD } from '../config/stages';
 import { LOWER_MAX } from '../entities/WhaleBody';
 import type { World } from './World';
+import type { Whale } from '../entities/Whale';
+import type { Wake } from '../systems/ParticleManager';
 
 /**
  * 模式 A：沉浸式循环叙事。每帧只做一件事——由 storyProgress 求出世界状态，
@@ -19,6 +21,10 @@ export class NarrativeScene {
   private readonly tmp = { x: 0, y: 0 };
   frame!: StoryFrame;
   private warm = 0;
+  /** 停下时的悬停轻摆累积的相位（两头鲸鱼共用，循环衔接处一致） */
+  private idle = 0;
+  /** 尾叶相对身体的位置与速度（推水） */
+  private readonly fluke = { rx: 0, ry: 0, vx: 0, vy: 0, valid: false };
 
   /** 跳转后让生物“就位”：用若干次大步长模拟，使出现的生物已到达各自的位置。 */
   requestWarmup(seconds = 7): void {
@@ -43,12 +49,15 @@ export class NarrativeScene {
     Object.assign(w1.state, f.whale1);
     Object.assign(w2.state, f.whale2);
 
-    // 尾鳍拍动频率与叙事推进速度相匹配：用户停下时，鲸鱼放缓为悬停般的轻摆
+    // 拍尾相位由故事时间决定，因此拍尾频率天然与游动速度相匹配；
+    // 用户停下（或暂停）时，鲸鱼放缓为悬停般的轻摆：相位继续缓慢前进，幅度略微减小
     const rate = StoryProgressController.rateAt(p);
-    const effort = frozen ? 0 : clamp(Math.abs(progress.velocity) / Math.max(1e-5, rate * 2.5));
-    const adt = frozen ? dt * 0.15 : dt;
-    w1.update(adt, effort);
-    w2.update(adt, effort);
+    const motion = frozen ? 0 : clamp(Math.abs(progress.velocity) / Math.max(1e-5, rate * 0.5));
+    this.idle += dt * TAU * 0.11 * (1 - motion) * (frozen ? 0.4 : 1);
+    for (const w of [w1, w2]) {
+      w.phase = w.state.phase + this.idle;
+      w.state.swim *= 0.6 + 0.4 * motion;
+    }
     w1.prepare();
     w2.prepare();
 
@@ -68,6 +77,10 @@ export class NarrativeScene {
       rays: 1,
       vignette: f.env.vignette,
       lookUp: clamp(-this.shot.elev / 6),
+      rayLen: f.env.rayLen,
+      glow: f.env.glow,
+      tone: f.env.tone,
+      rim: f.env.rim,
     });
 
     // 磷虾：由正在接近的那头鲸鱼提供嘴与吻端位置
@@ -90,7 +103,7 @@ export class NarrativeScene {
     const sb = world.timeline.descent.seabedShift(p, this.tmp);
     world.seabed.shiftX = sb.x;
     world.seabed.shiftY = sb.y;
-    world.seabed.reveal = DescentMotion.covers(p) ? 1 - smoothstep(14, 48, WORLD.seabedY + sb.y - (w1.state.y + LOWER_MAX)) : 1;
+    world.seabed.reveal = DescentMotion.covers(p) ? 1 - smoothstep(10, 32, WORLD.seabedY + sb.y - (w1.state.y + LOWER_MAX)) : 1;
 
     // 水体参照系：海洋雪与途中的生物随水体漂移；鲸鱼身体经过时推开附近的颗粒
     const water = f.water;
@@ -99,15 +112,17 @@ export class NarrativeScene {
     pm.waterY = water.y;
     const wk = pm.wake;
     wk.amt = water.wake;
+    const mover = p < WHALE_SWITCH ? w1 : w2;
     if (wk.amt > 0) {
-      w1.toWorld(-1.9, 0.26, this.tmp);
+      mover.toWorld(-1.9, 0.26, this.tmp);
       wk.x = this.tmp.x;
       wk.y = this.tmp.y;
-      wk.z = w1.state.z;
-      wk.pitch = w1.state.pitch;
+      wk.z = mover.state.z;
+      wk.pitch = mover.state.pitch;
       wk.vx = water.flowX;
       wk.vy = water.flowY;
     }
+    this.flukeWash(mover, wk, dt, water.wake * clamp(mover.state.swim + mover.state.beat));
 
     const cu = { mode: 'story' as const, p, eco: f.eco, camY: camera.cam.cy, dt: frozen ? dt * 0.25 : dt, time: rc.time, reduced: rc.reducedMotion };
     if (this.warm > 0) {
@@ -126,6 +141,37 @@ export class NarrativeScene {
     r.feeding = f.krill.feed > 0 && f.krill.feed < 1 ? feeder : smoothstep(0.07, 0.075, p) > 0 && p < 0.2 ? feeder : null;
     world.particles.update(rc, dt);
     return f;
+  }
+
+  /**
+   * 尾叶推水：尾叶相对身体的速度（逐帧差分，去掉身体本身的移动），驱动颗粒的局部位移。
+   * 只是绘制时的位移场，跳转或暂停时平滑地消失。
+   */
+  private flukeWash(w: Whale, wk: Wake, dt: number, amt: number): void {
+    const f = this.fluke;
+    w.flukePoint(this.tmp);
+    const bx = w.state.x;
+    const by = w.state.y;
+    const rx = this.tmp.x - bx;
+    const ry = this.tmp.y - by;
+    let vx = 0;
+    let vy = 0;
+    if (f.valid && dt > 1e-4) {
+      vx = (rx - f.rx) / dt;
+      vy = (ry - f.ry) / dt;
+      // 跳转、切换鲸鱼时不要产生突然的推动
+      if (Math.hypot(vx, vy) > 6) vx = vy = 0;
+    }
+    f.rx = rx;
+    f.ry = ry;
+    f.valid = true;
+    f.vx = damp(f.vx, vx, 8, dt);
+    f.vy = damp(f.vy, vy, 8, dt);
+    wk.flukeX = this.tmp.x;
+    wk.flukeY = this.tmp.y;
+    wk.flukeVx = f.vx;
+    wk.flukeVy = f.vy;
+    wk.flukeAmt = amt;
   }
 
   get currentShot(): ShotParams {

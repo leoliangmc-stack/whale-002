@@ -61,6 +61,21 @@ export const EYE_ART = {
 export const ART_EYE_S = (SNOUT_X - 0.78216 * ART_W) / (AXIS_PX * DX);
 export const ART_EYE_OFF = -((0.42545 * ART_H - (SNOUT_Y - DY * AXIS_PX * ART_EYE_S)) / AXIS_PX);
 
+/**
+ * 游动的画中胸鳍的轮廓（画框像素，含鳍缘的描线）。胸鳍可以绕根部单独转动：
+ * 加载时把轮廓内的像素切成单独的图层，轮廓内的身体换成 swim-fin-under.webp 中补画的皮肤
+ * （由 scripts/fin-cutout.py 按同一个轮廓生成，修改轮廓后需要重新运行）。
+ */
+export const FIN_POLY: ReadonlyArray<readonly [number, number]> = [
+  [1848, 348], [1820, 362], [1796, 377], [1773, 397], [1747, 423], [1721, 450], [1696, 475], [1671, 497], [1650, 515],
+  [1635, 528], [1628, 540], [1634, 551], [1652, 556], [1673, 556], [1702, 552], [1732, 544], [1762, 535], [1795, 524],
+  [1830, 503], [1866, 473], [1906, 438], [1941, 408], [1964, 388], [1980, 371], [1976, 354], [1944, 346], [1895, 343],
+];
+/** 胸鳍图层与补丁在画框中的范围：x, y, w, h */
+export const FIN_RECT = [1620, 335, 368, 229] as const;
+/** 胸鳍转动的支点（画框像素）：鳍根中部，肩关节在它上方的体内 */
+export const FIN_PIVOT = { x: 1912, y: 362 };
+
 /** 一张身体画及其预先缩小的版本（1/2、1/4、1/8）：远处的鲸鱼用小图绘制，避免缩小时的条纹与闪烁 */
 export interface Mipped {
   levels: CanvasImageSource[];
@@ -77,6 +92,10 @@ export interface AlphaMask {
 
 export interface WhaleArtSet {
   swim: Mipped;
+  /** 游动的画，去掉胸鳍（轮廓内换成补画的皮肤）；与 fin 一起使用时胸鳍可以单独转动 */
+  swimBody: Mipped;
+  /** 胸鳍图层（FIN_RECT 范围内，画框像素） */
+  fin: Mipped;
   lunge: Mipped;
   skeleton: Mipped;
   skeletonMask: AlphaMask;
@@ -98,11 +117,11 @@ function alphaMask(img: HTMLImageElement, step: number): AlphaMask {
   return { w, h, step, data };
 }
 
-function mip(img: HTMLImageElement): Mipped {
+function mip(img: CanvasImageSource, w0 = ART_W, h0 = ART_H): Mipped {
   const levels: CanvasImageSource[] = [img];
   let src: CanvasImageSource = img;
-  let w = ART_W;
-  let h = ART_H;
+  let w = w0;
+  let h = h0;
   for (let i = 0; i < 3; i++) {
     w = Math.ceil(w / 2);
     h = Math.ceil(h / 2);
@@ -127,6 +146,59 @@ export function mipLevel(ratio: number): number {
   return 3;
 }
 
+/**
+ * 把游动的画分成“无鳍的身体”与“胸鳍”两层：轮廓内（抗锯齿的覆盖率 m）身体换成补画的皮肤，
+ * 胸鳍图层是原画乘以 m。两层按原位叠放时与原画一致。
+ */
+function cutFin(swim: HTMLImageElement, under: HTMLImageElement): { body: HTMLCanvasElement; fin: HTMLCanvasElement } {
+  const [rx, ry, rw, rh] = FIN_RECT;
+  const canvas = (w: number, h: number) => {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    return c;
+  };
+  const pixels = (draw: (ctx: CanvasRenderingContext2D) => void) => {
+    const ctx = canvas(rw, rh).getContext('2d', { willReadFrequently: true })!;
+    draw(ctx);
+    return ctx.getImageData(0, 0, rw, rh);
+  };
+  const orig = pixels((c) => c.drawImage(swim, -rx, -ry));
+  const patch = pixels((c) => c.drawImage(under, 0, 0));
+  const mask = pixels((c) => {
+    c.beginPath();
+    for (const [x, y] of FIN_POLY) c.lineTo(x - rx + 0.5, y - ry + 0.5);
+    c.closePath();
+    c.fill();
+  });
+  const O = orig.data;
+  const Q = patch.data;
+  const M = mask.data;
+  const finData = new ImageData(rw, rh);
+  const F = finData.data;
+  for (let i = 0; i < O.length; i += 4) {
+    const m = M[i + 3] / 255;
+    if (m <= 0) continue;
+    // 身体：预乘颜色的线性混合
+    const ao = O[i + 3] / 255;
+    const aq = Q[i + 3] / 255;
+    const a = ao * (1 - m) + aq * m;
+    for (let k = 0; k < 3; k++) {
+      F[i + k] = O[i + k];
+      O[i + k] = a > 1e-4 ? (O[i + k] * ao * (1 - m) + Q[i + k] * aq * m) / a : 0;
+    }
+    F[i + 3] = O[i + 3] * m;
+    O[i + 3] = a * 255;
+  }
+  const body = canvas(ART_W, ART_H);
+  const bctx = body.getContext('2d')!;
+  bctx.drawImage(swim, 0, 0);
+  bctx.putImageData(orig, rx, ry);
+  const fin = canvas(rw, rh);
+  fin.getContext('2d')!.putImageData(finData, 0, 0);
+  return { body, fin };
+}
+
 let art: WhaleArtSet | null = null;
 let loading: Promise<WhaleArtSet | null> | null = null;
 
@@ -148,12 +220,22 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 /** 加载全部绘画（只加载一次）。 */
 export function loadWhaleArt(base = './assets/whale/'): Promise<WhaleArtSet | null> {
   if (!loading) {
-    loading = Promise.all(['swim', 'lunge', 'skeleton', 'eye-open', 'eye-closed'].map((n) => loadImage(base + n + '.webp')))
+    loading = Promise.all(['swim', 'lunge', 'skeleton', 'eye-open', 'eye-closed', 'swim-fin-under'].map((n) => loadImage(base + n + '.webp')))
       .then(async (imgs) => {
         // 先解码，避免第一次绘制时卡顿
         await Promise.all(imgs.map((i) => i.decode?.().catch(() => undefined)));
-        const [swim, lunge, skeleton, eyeOpen, eyeClosed] = imgs;
-        art = { swim: mip(swim), lunge: mip(lunge), skeleton: mip(skeleton), skeletonMask: alphaMask(skeleton, 2), eyeOpen, eyeClosed };
+        const [swim, lunge, skeleton, eyeOpen, eyeClosed, under] = imgs;
+        const cut = cutFin(swim, under);
+        art = {
+          swim: mip(swim),
+          swimBody: mip(cut.body),
+          fin: mip(cut.fin, FIN_RECT[2], FIN_RECT[3]),
+          lunge: mip(lunge),
+          skeleton: mip(skeleton),
+          skeletonMask: alphaMask(skeleton, 2),
+          eyeOpen,
+          eyeClosed,
+        };
         return art;
       })
       .catch((e) => {

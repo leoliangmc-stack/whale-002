@@ -3,8 +3,8 @@ import { clamp, hash1, lerp, noise1, rng, sampleProfile, smoothstep, TAU } from 
 import { textures } from '../core/textures';
 import type { RenderCtx } from '../core/types';
 import { WORLD } from '../config/stages';
-import { ART_EYE_OFF, ART_H, ART_W, AXIS_ANGLE, AXIS_PX, axisPx, EYE_ART, mipLevel, sAtPx, whaleArt, type Mipped } from './WhaleArt';
-import { LOWER, LUNGE_LO, LUNGE_UP, S_BLOW, S_EYE, S_FIN, UPPER, WHALE_LEN, WhaleBody, type WhaleShape } from './WhaleBody';
+import { ART_EYE_OFF, ART_H, ART_W, AXIS_ANGLE, AXIS_PX, axisPx, EYE_ART, FIN_PIVOT, FIN_RECT, mipLevel, sAtPx, whaleArt, type Mipped, type WhaleArtSet } from './WhaleArt';
+import { LOWER, LUNGE_LO, LUNGE_UP, S_BLOW, S_EYE, S_FIN, strokeWarp, UPPER, WHALE_LEN, WhaleBody, type WhaleShape } from './WhaleBody';
 import { WhaleSkeleton } from './WhaleSkeleton';
 
 /** 由叙事时间线求得的鲸鱼状态。 */
@@ -16,6 +16,8 @@ export interface WhaleState {
   /** 俯仰角（弧度，正值为低头） */
   pitch: number;
   swim: number;
+  /** 主动游动的拍尾相位（弧度，由故事时间决定） */
+  phase: number;
   mouth: number;
   throat: number;
   /** 眼睛睁开程度 1→0 */
@@ -41,9 +43,13 @@ export interface WhaleState {
   nod: number;
   /** 尾叶被动偏转（弧度） */
   fluke: number;
-  /** 近侧 / 远侧胸鳍随水流的被动摆动（弧度，正值向后上方抬起）。画中的胸鳍贴着身体，不单独摆动 */
+  /** 近侧 / 远侧胸鳍随水流的被动摆动（弧度，正值向后上方抬起）。下沉动作层的输出，不直接驱动画中的胸鳍（见 fin） */
   finN: number;
   finF: number;
+  /** 身体的弓形（米，头尾相对体轴中部下垂的量，见 WhaleBody.archShape）：下沉时舒展的弧线 */
+  arc: number;
+  /** 画中胸鳍绕根部的转动（弧度，正值向下张开、离开身体，负值向后贴近腹部）：游动时配合转向、上浮与滑行 */
+  fin: number;
   /** 鲸鱼下方海床的世界 y（下沉途中海床属于水体参照系，会有偏移；用于尾叶的海床约束与接触阴影） */
   seabed: number;
 }
@@ -71,8 +77,13 @@ const FLUKE_TIP = { x: 40, y: 472 };
 const FLUKE_MID = { x: 150, y: 400 };
 const FLUKE_UP = { x: 170, y: 255 };
 
+/** 胸鳍图层随身体摆放时参照的脊线位置（鳍的中部） */
+const FIN_S = sAtPx(FIN_RECT[0] + FIN_RECT[2] / 2);
+
 /** 沿体轴切成的条带数：每条约 0.3 米，弯曲时看不出折线 */
 const SLICES = 84;
+/** 画中离体轴最远的内容（尾叶的叶尖、背鳍）到体轴的距离（画像素），用于估计弯曲时条带之间的缝 */
+const BEND_REACH = 280;
 
 export function makeWhaleState(): WhaleState {
   return {
@@ -82,6 +93,7 @@ export function makeWhaleState(): WhaleState {
     z: 0,
     pitch: 0,
     swim: 1,
+    phase: 0,
     mouth: 0,
     throat: 0,
     eye: 1,
@@ -99,6 +111,8 @@ export function makeWhaleState(): WhaleState {
     fluke: 0,
     finN: 0,
     finF: 0,
+    arc: 0,
+    fin: 0,
     seabed: WORLD.seabedY,
   };
 }
@@ -173,8 +187,9 @@ export class Whale {
   readonly body = new WhaleBody();
   readonly skeleton: WhaleSkeleton;
   readonly state: WhaleState = makeWhaleState();
+  /** 主动游动的拍尾相位（弧度）：叙事中为 state.phase 加上停下时的悬停轻摆（见 NarrativeScene） */
   phase = 0;
-  private readonly shape: WhaleShape = { swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest: 0, flex: 0, nod: 0, fluke: 0, shrink: 0 };
+  private readonly shape: WhaleShape = { swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest: 0, flex: 0, nod: 0, fluke: 0, arc: 0, shrink: 0 };
   private readonly sh: Shade = makeShade();
   private readonly holes: Hole[] = [];
   private readonly tmp: RGB = [0, 0, 0];
@@ -239,17 +254,6 @@ export class Whale {
     this.skeleton = new WhaleSkeleton(seed);
   }
 
-  /**
-   * 推进主动游动的相位。effort 为叙事推进速度（用于让尾鳍拍动与位移匹配）。
-   * 失去生命之后的一切动作（最后几次摆动、被动摆动）都由叙事进度决定，不再使用这个时钟。
-   */
-  update(dt: number, effort: number): void {
-    const st = this.state;
-    // 蓝鲸是拍尾最慢的须鲸：巡游时约 8 秒拍一次（Gough et al. 2019），用户快速滚动时也只略微加快
-    const freq = 0.12 + 0.07 * clamp(effort);
-    this.phase += dt * TAU * freq * (0.35 + 0.65 * st.swim);
-  }
-
   /** 局部坐标 → 世界坐标 */
   toWorld(lx: number, ly: number, out: { x: number; y: number }): { x: number; y: number } {
     const st = this.state;
@@ -265,7 +269,7 @@ export class Whale {
     const st = this.state;
     const sh = this.shape;
     sh.swim = st.swim;
-    sh.phase = this.phase;
+    sh.phase = strokeWarp(this.phase);
     sh.beat = st.beat;
     sh.beatPh = st.beatPh;
     sh.mouth = st.mouth;
@@ -274,6 +278,7 @@ export class Whale {
     sh.flex = st.flex;
     sh.nod = st.nod;
     sh.fluke = st.fluke;
+    sh.arc = st.arc;
     sh.shrink = 1 - smoothstep(0.0, 1, st.tissue);
     this.body.compute(sh);
     this.flukeFor();
@@ -431,6 +436,13 @@ export class Whale {
     return this.toWorld(this.f.x, this.f.y, out);
   }
 
+  /** 尾叶中部（世界坐标）：尾叶拍动时推动海水的位置 */
+  flukePoint(out: { x: number; y: number }): { x: number; y: number } {
+    const last = this.slices[this.slices.length - 1];
+    this.artToLocal(last, FLUKE_MID.x, FLUKE_MID.y, this.q);
+    return this.toWorld(this.q.x, this.q.y, out);
+  }
+
   /** 胸鳍根部（局部坐标） */
   finRoot(out: { x: number; y: number }): { x: number; y: number } {
     return this.body.point(S_FIN, FIN_ROOT_V, out);
@@ -541,7 +553,14 @@ export class Whale {
     const art = whaleArt()!;
     // 游动 → 张嘴：两张画在图层中按预乘透明度精确地交叉淡化，张嘴的画里上下颌之间的缝隙保持透明
     const m = this.gape;
-    if (m < 0.999) this.drawSlices(lctx, art.swim, false);
+    if (m < 0.999) {
+      // 胸鳍单独转动时：先画去掉胸鳍的身体，再把胸鳍绕根部转过去叠上
+      const fin = this.finTurn();
+      if (fin !== 0) {
+        this.drawSlices(lctx, art.swimBody, false);
+        this.drawFin(lctx, art, fin);
+      } else this.drawSlices(lctx, art.swim, false);
+    }
     if (m > 0.001) {
       if (m >= 0.999) this.drawLunge(lctx, art.lunge);
       else {
@@ -715,30 +734,65 @@ export class Whale {
     const stt = Math.sin(AXIS_ANGLE);
     const A = this.q;
     const base = ctx.globalAlpha;
-    for (const sl of this.slices) {
+    const sls = this.slices;
+    for (let j = 0; j < sls.length; j++) {
+      const sl = sls[j];
       const al = sl.alpha * (lunge ? 1 : sl.tipFade);
       if (al <= 0.002) continue;
       ctx.globalAlpha = base * al;
-      // 相邻条带重叠 1 像素，避免接缝处的发丝缝
+      // 相邻条带重叠 1 像素，避免接缝处的发丝缝；身体弯曲时，外凸一侧的条带之间会张开楔形的缝，
+      // 所以每条带再向尾部（下一条带，之后绘制并盖住重叠处）多延伸一些，延伸量随相邻条带的夹角增加
+      const next = j + 1 < sls.length ? sls[j + 1] : sl;
+      const da = next.a - sl.a;
+      const ext = Math.min(16, Math.ceil(Math.abs(da) * BEND_REACH));
       const x0 = Math.max(0, sl.x0 - 1);
-      const w = Math.min(ART_W, sl.x1 + 1) - x0;
+      const x1 = Math.min(ART_W, sl.x1 + 1);
       axisPx(sl.s, A);
       const ku = lunge ? sl.kuL : sl.ku;
       const kl = lunge ? sl.klL : sl.kl;
-      if (Math.abs(ku - 1) < 1e-3 && Math.abs(kl - 1) < 1e-3) {
+      if (ext <= 0 && Math.abs(ku - 1) < 1e-3 && Math.abs(kl - 1) < 1e-3) {
         this.sliceTransform(ctx, B, sl, A, 1, mpp, ct, stt);
-        ctx.drawImage(img, x0 * r, 0, w * r, ART_H * r, x0, 0, w, ART_H);
+        ctx.drawImage(img, x0 * r, 0, (x1 - x0) * r, ART_H * r, x0, 0, x1 - x0, ART_H);
       } else {
-        // 体轴上下两半分别缩放，在体轴处重叠 1 像素
+        // 体轴上下两半分别绘制（张嘴、分解时各自缩放），在体轴处重叠 1 像素；
+        // 只有外凸的一半向尾部延伸（向尾部越来越向下弯时，外凸的是背侧）
         const ya = Math.ceil(A.y) + 1;
         const yb = Math.floor(A.y) - 1;
+        const xu = da < 0 ? Math.max(0, x0 - ext) : x0;
+        const xl = da > 0 ? Math.max(0, x0 - ext) : x0;
         this.sliceTransform(ctx, B, sl, A, ku, mpp, ct, stt);
-        ctx.drawImage(img, x0 * r, 0, w * r, ya * r, x0, 0, w, ya);
-        this.sliceTransform(ctx, B, sl, A, kl, mpp, ct, stt);
-        ctx.drawImage(img, x0 * r, yb * r, w * r, (ART_H - yb) * r, x0, yb, w, ART_H - yb);
+        ctx.drawImage(img, xu * r, 0, (x1 - xu) * r, ya * r, xu, 0, x1 - xu, ya);
+        if (Math.abs(kl - ku) >= 1e-3) this.sliceTransform(ctx, B, sl, A, kl, mpp, ct, stt);
+        ctx.drawImage(img, xl * r, yb * r, (x1 - xl) * r, (ART_H - yb) * r, xl, yb, x1 - xl, ART_H - yb);
       }
     }
     ctx.globalAlpha = base;
+    ctx.setTransform(B);
+  }
+
+  /** 胸鳍的转动（弧度）。滤食时（张嘴的画、鼓起的喉囊）与分解、静卧时身体会变形，这些时候胸鳍保持原位。 */
+  private finTurn(): number {
+    const st = this.state;
+    if (Math.abs(st.fin) < 1e-4 || this.gape > 0.001 || st.throat > 0.001 || st.tissue < 0.999 || st.rest > 0) return 0;
+    return st.fin;
+  }
+
+  /** 胸鳍图层：按鳍中部所在条带的位置摆放，再绕鳍根转动（使用 ctx 当前的局部变换） */
+  private drawFin(ctx: CanvasRenderingContext2D, art: WhaleArtSet, turn: number): void {
+    const B = ctx.getTransform();
+    const mpp = WHALE_LEN / AXIS_PX;
+    const lv = mipLevel(Math.hypot(B.a, B.b) * mpp);
+    const img = art.fin.levels[lv];
+    const r = 1 / (1 << lv);
+    const f = this.body.frame(FIN_S, 0, this.f);
+    const A = axisPx(FIN_S, this.q);
+    this.sliceTransform(ctx, B, { px: f.x, py: f.y, a: f.a }, A, 1, mpp, Math.cos(AXIS_ANGLE), Math.sin(AXIS_ANGLE));
+    // 画框与局部坐标的 y 轴都向下：画面上逆时针（张开）是负的旋转角
+    ctx.translate(FIN_PIVOT.x, FIN_PIVOT.y);
+    ctx.rotate(-turn);
+    ctx.translate(-FIN_PIVOT.x, -FIN_PIVOT.y);
+    const [rx, ry, rw, rh] = FIN_RECT;
+    ctx.drawImage(img, 0, 0, Math.ceil(rw * r), Math.ceil(rh * r), rx, ry, rw, rh);
     ctx.setTransform(B);
   }
 
@@ -746,7 +800,7 @@ export class Whale {
   private sliceTransform(
     ctx: CanvasRenderingContext2D,
     B: DOMMatrix,
-    sl: Slice,
+    sl: Pick<Slice, 'px' | 'py' | 'a'>,
     A: { x: number; y: number },
     ky: number,
     mpp: number,
@@ -895,6 +949,7 @@ export class Whale {
     }
     this.drawBodyContactShade(ctx);
     this.drawDeepLight(ctx, rc);
+    this.drawVolumeLight(ctx, rc);
     // 近景：细小的毛孔、斑点与浅浅的褶痕（只铺在镜头附近，开销很小）
     if (scale > 70 && st.tissue > 0.99) this.drawSkinDetail(ctx, rc, scale);
     // 逆光：镜头位于鲸鱼下方时，身体背着明亮的海面变暗，边缘被海面的光勾勒出来
@@ -1251,6 +1306,58 @@ export class Whale {
     ctx.stroke();
     ctx.strokeStyle = `rgba(200,230,245,${0.14 * deep})`;
     ctx.lineWidth = 0.1;
+    ctx.stroke();
+  }
+
+  /**
+   * 下沉时的体积明暗与轮廓光：上方透下的天光沿背部铺开一层柔和的亮，腹部渐渐沉入暗处，
+   * 背部边缘再勾一道很细的冷色轮廓光。都沿着身体的轮廓线绘制，所以随身体的弧度一起弯曲；
+   * 只落在身体上（source-atop），越深越弱但不会完全消失。
+   */
+  private drawVolumeLight(ctx: CanvasRenderingContext2D, rc: RenderCtx): void {
+    const st = this.state;
+    const k = rc.light.rim * (0.6 + 0.4 * rc.light.sunAt(st.y)) * smoothstep(0.98, 1, st.tissue);
+    if (k < 0.02) return;
+    const b = this.body;
+    const n = b.n;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    // 背部：宽而淡的受光面
+    ctx.beginPath();
+    ctx.moveTo(b.ux[0], b.uy[0]);
+    through(ctx, b.ux, b.uy, 0, n - 1);
+    for (const [lw, a] of [
+      [2.6, 0.07],
+      [1.4, 0.08],
+    ] as const) {
+      ctx.strokeStyle = `rgba(185,225,250,${a * k})`;
+      ctx.lineWidth = lw;
+      ctx.stroke();
+    }
+    // 轮廓光
+    for (const [lw, a] of [
+      [0.5, 0.09],
+      [0.2, 0.15],
+      [0.07, 0.26],
+    ] as const) {
+      ctx.strokeStyle = `rgba(205,238,255,${a * k})`;
+      ctx.lineWidth = lw;
+      ctx.stroke();
+    }
+    // 腹部：渐渐沉入暗处，边缘留一线被下方深蓝映亮的冷光
+    ctx.beginPath();
+    ctx.moveTo(b.bx[0], b.by[0]);
+    through(ctx, b.bx, b.by, 0, n - 1);
+    for (const [lw, a] of [
+      [3.2, 0.12],
+      [1.6, 0.1],
+    ] as const) {
+      ctx.strokeStyle = `rgba(3,12,28,${a * k})`;
+      ctx.lineWidth = lw;
+      ctx.stroke();
+    }
+    ctx.strokeStyle = `rgba(120,180,225,${0.07 * k})`;
+    ctx.lineWidth = 0.14;
     ctx.stroke();
   }
 

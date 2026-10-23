@@ -10,7 +10,7 @@ const tl = new StoryTimeline();
 /** 静卧姿态下的身体几何（局部坐标，+y 向下；海床在 y = REST_GROUND） */
 function restBody(rest = 1): WhaleBody {
   const b = new WhaleBody();
-  b.compute({ swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest, flex: 0, nod: 0, fluke: 0, shrink: 0 });
+  b.compute({ swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest, flex: 0, nod: 0, fluke: 0, arc: 0, shrink: 0 });
   return b;
 }
 

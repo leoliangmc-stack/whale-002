@@ -6,7 +6,7 @@ import type { World } from '../scenes/World';
  * ParallaxManager：2.5D 分层渲染管线。所有对象都有真实的深度 z，由透视相机统一投影，
  * 因此各层天然以不同速度移动、形成视差；这里负责按层次组织绘制顺序：
  *
- *   背景层：海水渐变 → 海面天花板 / 天空 → 光束 → 远处山脊 → 远景颗粒与生物
+ *   背景层：海水渐变与光束 → 海面天花板 / 天空 → 远处山脊 → 远景颗粒与生物
  *   中景层：海床与后方岩石 → 后方磷虾 → 鲸鱼（被吞入的磷虾 → 身体 / 骨骼）→ 中景生物
  *   前景层：沉积物云、水雾、气泡 → 前方磷虾 → 前景岩石与海鳃 → 前景生物 → 近处颗粒
  *   光影层：分屏水线 → 生物发光 → 暗角与调色 → 高空俯视镜头（交叉溶解）
@@ -30,12 +30,12 @@ export class ParallaxManager {
 
     if (!aerialFull) {
       // ---------------- 背景层
+      // 海水渐变与光束（同一张低分辨率图层）
       lighting.drawBackground(rc);
-      lap('bg');
+      lap('bg+rays');
       surface.drawCeiling(rc);
       const wl = surface.drawSky(rc);
-      lighting.drawRays(rc);
-      lap('surface+rays');
+      lap('surface');
       seabed.drawFar(rc);
       particles.drawSnow(rc, false, wl ?? -1e9, r.snow);
       creatures.drawLayer(rc, 13.7, 1e9);

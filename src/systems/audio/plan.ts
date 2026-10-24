@@ -76,7 +76,8 @@ export function logLerp(a: number, b: number, t: number): number {
 const DEPTH = {
   A01: { db: [[0, -27], [40, -27], [120, -31], [250, -40], [300, OFF]], lpf: [[0, 5000], [10, 4000], [40, 3200], [120, 2200], [250, 1500]] },
   A02: { db: [[0, -26], [5, -29], [15, -33], [30, -40], [45, OFF]], lpf: [[0, 1500], [15, 900], [45, 500]] },
-  A03: { db: [[100, OFF], [200, -38], [400, -32], [1300, -32], [1790, -34]], lpf: [[200, 1600], [800, 1000], [1300, 800], [1790, 650]] },
+  // 深渊端 −32（原 −34）：手机外放（300 Hz 以上）时海床与鲸骨段的环境只剩约 −41 dBFS，听起来像没声音了
+  A03: { db: [[100, OFF], [200, -38], [400, -32], [1300, -32], [1790, -32]], lpf: [[200, 1600], [800, 1000], [1300, 800], [1790, 650]] },
   A07: { db: [[0, -36], [200, -36], [600, -31], [1000, -30], [1300, -32], [1790, -37]], lpf: [[0, 1800], [800, 1200], [1790, 800]] },
 } as const;
 
@@ -102,7 +103,7 @@ const A09_LPF: ReadonlyArray<readonly [number, number]> = [[50, 6000], [1700, 25
 
 /** 叙事偏移（作用于全部 BED，dB）：闭眼的主观收拢、着地前的屏息、鲸骨特写 */
 export function bedOffset(p: number): number {
-  return -3 * window4(p, 0.245, 0.25, 0.297, 0.305) - 2 * window4(p, 0.488, 0.494, 0.497, 0.503) - 2 * window4(p, 0.708, 0.716, 0.782, 0.79);
+  return -3 * window4(p, 0.245, 0.25, 0.297, 0.305) - 2 * window4(p, 0.488, 0.494, 0.497, 0.503) - 1 * window4(p, 0.708, 0.716, 0.782, 0.79);
 }
 
 /** A07 在海床段 −4 dB（鲸骨岛屿周围几乎听不到远方的鲸群） */
@@ -110,9 +111,9 @@ function chorusOffset(p: number): number {
   return -4 * window4(p, 0.515, 0.53, 0.8, 0.84);
 }
 
-/** A10 伤口近景 +3 dB，拉开后 −2 dB */
+/** A10 伤口近景 +3 dB，拉开后 −2 dB；镜头离开鲸骨、升向磷虾群时（0.805–0.845）淡出，不与磷虾群的窸窣叠在一起 */
 function woundOffset(p: number): number {
-  return curve([[0.564, 0], [0.576, 3], [0.631, 3], [0.643, 0], [0.675, -2], [0.7, 0]], p) * (p >= 0.564 && p <= 0.7 ? 1 : 0);
+  return curve([[0.564, 0], [0.576, 3], [0.631, 3], [0.643, 0], [0.675, -2], [0.7, 0], [0.805, 0], [0.845, -20]], p) * (p >= 0.564 ? 1 : 0);
 }
 
 // ------------------------------------------------------------------ 视角（1.5）
@@ -134,9 +135,12 @@ export interface Views {
  */
 export function views(p: number): Views {
   const emerge = smoothstep(0.154, 0.155, p);
-  const air = emerge * (1 - smoothstep(0.19, 0.199, p));
-  const wl = smoothstep(0.193, 0.199, p) * (1 - smoothstep(0.2178, 0.2192, p));
-  const uw = 1 - Math.max(air, 0.8 * wl);
+  // 高空 → 水线：两边用同一个窗口互补交叉（浪花水雾扫过镜头），水下层在交叉中不会冒出来
+  const wipe = smoothstep(0.191, 0.199, p);
+  const air = emerge * (1 - wipe);
+  const wl = wipe * (1 - smoothstep(0.2178, 0.2192, p));
+  // 出水前 1 → 空中 0 → 水线 0.2（下半画面的水下底）→ 入水后 1
+  const uw = clamp(1 - air - wl) + 0.2 * wl;
   let uwLpf = Infinity;
   if (p > 0.1525 && p < 0.1555) uwLpf = logLerp(4000, 400, smoothstep(0.1535, 0.155, p));
   if (p >= 0.2183 && p < 0.2207) uwLpf = logLerp(1200, 4000, (p - 0.2185) / 0.0022);
@@ -299,7 +303,8 @@ function boneTicks(): Cue[] {
 }
 
 const TABLE: Cue[] = [
-  { p: 0.0335, id: 'F02', db: -27, duck: 'sfx', view: 'uw', label: 'Q01 巨体滑过' },
+  // F02 的峰值在素材开始后约 3.8 s：从 0.030 开始，峰值落在鲸鱼正从头顶经过的 p ≈ 0.0425
+  { p: 0.03, id: 'F02', db: -27, duck: 'sfx', view: 'uw', label: 'Q01 巨体滑过' },
   { p: 0.036, id: 'V01', db: -19, duck: 'whale', view: 'uw', hero: true, latest: 0.0445, label: 'Q02 鲸鸣（近）' },
   { p: 0.077, id: 'F03', db: -19, duck: 'hero', view: 'uw', hero: true, label: 'Q03 吞水' },
   { p: 0.104, id: 'F04', db: -25, duck: 'sfx', view: 'uw', label: 'Q04 滤水' },

@@ -8,7 +8,6 @@ export interface QualitySettings {
   /** 磷虾群中“远处成群的小磷虾”斑点图的层数 */
   krillSpecks: number;
   snow: number;
-  rays: number;
   caustics: boolean;
   spout: number;
   sediment: number;
@@ -26,7 +25,6 @@ export const QUALITY: Record<0 | 1 | 2, QualitySettings> = {
     krill: 420,
     krillSpecks: 3,
     snow: 80,
-    rays: 4,
     caustics: false,
     spout: 70,
     sediment: 90,
@@ -42,7 +40,6 @@ export const QUALITY: Record<0 | 1 | 2, QualitySettings> = {
     krill: 800,
     krillSpecks: 5,
     snow: 150,
-    rays: 6,
     caustics: true,
     spout: 120,
     sediment: 170,
@@ -58,7 +55,6 @@ export const QUALITY: Record<0 | 1 | 2, QualitySettings> = {
     krill: 1250,
     krillSpecks: 7,
     snow: 240,
-    rays: 9,
     caustics: true,
     spout: 170,
     sediment: 260,

@@ -17,7 +17,7 @@ export interface ExploreHit {
  */
 export class ExploreScene {
   readonly overview = { x: WORLD.restX - 2.57, y: WORLD.seabedY - 7.2, frameH: 39.4 };
-  private readonly fakeKrill = { visible: 0, x: 0, y: 0, z: 0, rx: 1, ry: 1, rz: 1, heading: 0, agg: 1, feed: 0, scatter: 0, deep: 0, stray: 0, sx: 0, sy: 0, sz: 0 };
+  private readonly fakeKrill = { visible: 0, x: 0, y: 0, z: 0, rx: 1, ry: 1, rz: 1, heading: 0, agg: 1, feed: 0, scatter: 0, deep: 0, stray: 0, align: 0, sx: 0, sy: 0, sz: 0 };
 
   constructor(
     private readonly world: World,

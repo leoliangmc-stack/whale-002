@@ -92,6 +92,9 @@ export class NarrativeScene {
     k.mouth.y = this.tmp.y;
     k.mouth.z = feeder.state.z;
     k.mouth.open = feeder.state.mouth;
+    k.mouth.a = feeder.state.pitch;
+    k.body.x = feeder.state.x;
+    k.body.y = feeder.state.y;
     feeder.snoutPoint(this.tmp);
     k.snout.x = this.tmp.x;
     k.snout.y = this.tmp.y;

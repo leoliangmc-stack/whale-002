@@ -321,7 +321,8 @@ export class Whale {
     const mpp = WHALE_LEN / AXIS_PX;
     const notch = axisPx(1, this.p);
     const vx = (FLUKE_TIP.x - notch.x) * mpp;
-    const vy = (FLUKE_TIP.y - notch.y) * mpp;
+    // 肚子朝上时画面沿体轴上下翻转，画中斜向后下方的下叶变成斜向后上方
+    const vy = (FLUKE_TIP.y - notch.y) * mpp * (this.state.roll >= Math.PI - 1e-3 ? -1 : 1);
     b.frame(1, 0, this.f);
     const nx = b.px[n - 1];
     const ny = b.py[n - 1];
@@ -469,9 +470,23 @@ export class Whale {
     return this.toWorld(this.q.x, this.q.y, out);
   }
 
-  /** 胸鳍根部（局部坐标） */
+  /** 画面是否上下翻转（肚子朝上） */
+  private get flipped(): boolean {
+    return this.shape.roll >= Math.PI - 1e-3;
+  }
+
+  /** 胸鳍根部（局部坐标）：肚子朝上时在体轴上方 */
   finRoot(out: { x: number; y: number }): { x: number; y: number } {
-    return this.body.point(S_FIN, FIN_ROOT_V, out);
+    return this.body.point(S_FIN, this.flipped ? -FIN_ROOT_V : FIN_ROOT_V, out);
+  }
+
+  /**
+   * 胸鳍的方向（局部坐标中根部指向鳍尖的角度，+y 向下）：画中的方向减去转动（画框与局部坐标的 y 都向下，
+   * 张开是画面上的逆时针）；肚子朝上时画面沿体轴上下翻转，方向随之镜像
+   */
+  finDir(): number {
+    const a = this.finPose.a - this.finTurn();
+    return this.flipped ? -a : a;
   }
 
   private computeShade(rc: RenderCtx): void {
@@ -723,6 +738,7 @@ export class Whale {
     const base = B.multiply(local);
     // 只取头部（胸鳍之前）的画面
     const x0 = Math.floor(axisPx(0.45, { x: 0, y: 0 }).x);
+    const wedge = [new DOMPoint(), new DOMPoint(), new DOMPoint(), new DOMPoint()];
     const sector = (sa: number, sb: number, turn: (a: number) => number, swell: (a: number) => number, reach: number) => {
       const sc = (sa + sb) / 2;
       const ba = sa + turn(sa);
@@ -747,8 +763,35 @@ export class Whale {
         .rotateSelf((bc * 180) / Math.PI)
         .multiplySelf(new DOMMatrix([g, 0, dg, g * k, 0, 0]))
         .rotateSelf((-sc * 180) / Math.PI);
-      ctx.setTransform(base.multiply(fan).multiply(head));
-      ctx.drawImage(img, x0 * r, 0, (ART_W - x0) * r, ART_H * r, x0, 0, ART_W - x0, ART_H);
+      const toPaint = fan.multiply(head);
+      ctx.setTransform(base.multiply(toPaint));
+      // 只取扇形分块在画中对应的那一小块（扇形的三角形按逆变换回画框像素的包围盒），
+      // 而不是每一块都把整个头部画一遍——张嘴时这能少掉绝大部分的填充
+      const inv = toPaint.inverse();
+      wedge[0].x = 0;
+      wedge[0].y = 0;
+      wedge[1].x = Math.cos(ba - e) * reach;
+      wedge[1].y = Math.sin(ba - e) * reach;
+      wedge[2].x = Math.cos((ba + bb) / 2) * reach * 1.12;
+      wedge[2].y = Math.sin((ba + bb) / 2) * reach * 1.12;
+      wedge[3].x = Math.cos(bb + e) * reach;
+      wedge[3].y = Math.sin(bb + e) * reach;
+      let ax = Infinity;
+      let ay = Infinity;
+      let bx = -Infinity;
+      let by = -Infinity;
+      for (const q of wedge) {
+        const m = inv.transformPoint(q);
+        ax = Math.min(ax, m.x);
+        ay = Math.min(ay, m.y);
+        bx = Math.max(bx, m.x);
+        by = Math.max(by, m.y);
+      }
+      const sx0 = Math.max(x0, Math.floor(ax) - 2);
+      const sy0 = Math.max(0, Math.floor(ay) - 2);
+      const sx1 = Math.min(ART_W, Math.ceil(bx) + 2);
+      const sy1 = Math.min(ART_H, Math.ceil(by) + 2);
+      if (sx1 > sx0 && sy1 > sy0) ctx.drawImage(img, sx0 * r, sy0 * r, (sx1 - sx0) * r, (sy1 - sy0) * r, sx0, sy0, sx1 - sx0, sy1 - sy0);
       ctx.restore();
     };
     // 下颌与喉囊
@@ -757,13 +800,13 @@ export class Whale {
     const turn = (a: number) => jt * (a <= JAW_A + JAW_BONE ? 1 : 1 - smoothstep(JAW_A + JAW_BONE, POUCH_A, a));
     const swell = (a: number) => 1 + POUCH_SWELL * open * Math.pow(Math.sin(Math.PI * clamp((a - JAW_A - JAW_BONE) / span)), 1.2);
     const a0 = JAW_A - JAW_MARGIN;
-    for (let i = 0; i < FAN; i++) sector(lerp(a0, POUCH_A, i / FAN), lerp(a0, POUCH_A, (i + 1) / FAN), turn, swell, R * 1.6);
+    for (let i = 0; i < FAN; i++) sector(lerp(a0, POUCH_A, i / FAN), lerp(a0, POUCH_A, (i + 1) / FAN), turn, swell, R * 1.2);
     // 吻部：靠近嘴唇的部分整体下放，往头顶（喷气孔）方向渐渐不动
     if (upper) {
       const a1 = ROSTRUM_A + JAW_MARGIN * 0.5;
       const turnU = (a: number) => rt * smoothstep(SKULL_A, ROSTRUM_A - 0.35, a);
       const none = () => 1;
-      for (let i = 0; i < FAN_U; i++) sector(lerp(SKULL_A, a1, i / FAN_U), lerp(SKULL_A, a1, (i + 1) / FAN_U), turnU, none, RU * 1.6);
+      for (let i = 0; i < FAN_U; i++) sector(lerp(SKULL_A, a1, i / FAN_U), lerp(SKULL_A, a1, (i + 1) / FAN_U), turnU, none, RU * 1.2);
     }
     ctx.setTransform(B);
   }
@@ -1300,11 +1343,11 @@ export class Whale {
 
   private finShadow(rc: RenderCtx, a: number): void {
     const root = this.finRoot(this.q);
-    const pose = this.finPose;
+    const dir = this.finDir();
     for (let j = 0; j < 4; j++) {
       const t = 0.4 + j * 0.2;
-      const x = root.x + Math.cos(pose.a) * FIN_LEN * t;
-      const y = root.y + Math.sin(pose.a) * FIN_LEN * t;
+      const x = root.x + Math.cos(dir) * FIN_LEN * t;
+      const y = root.y + Math.sin(dir) * FIN_LEN * t;
       this.groundShadowAt(rc, x, y, 0.55, 0.35 + 0.3 * (1 - t), 0.2 * a);
     }
   }
@@ -1327,7 +1370,8 @@ export class Whale {
     const st = Math.sin(-AXIS_ANGLE);
     const u = (dx * ct - dy * st) * mpp;
     const v0 = (dx * st + dy * ct) * mpp;
-    const v = v0 * (v0 < 0 ? sl.ku : sl.kl);
+    // 肚子朝上时画面沿体轴上下翻转
+    const v = v0 * (v0 < 0 ? sl.ku : sl.kl) * (this.flipped ? -1 : 1);
     const c = Math.cos(sl.a);
     const s = Math.sin(sl.a);
     out.x = sl.px + u * c - v * s;

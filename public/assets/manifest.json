@@ -1,4 +1,9 @@
 {
   "textures": {},
-  "audio": {}
+  "audio": {
+    "whaleAB": "audio/blue-whale-ab.mp3",
+    "whaleAB2": "audio/blue-whale-ab2.mp3",
+    "whaleB": "audio/blue-whale-b.mp3",
+    "chorus": "audio/ocean-chorus.mp3"
+  }
 }

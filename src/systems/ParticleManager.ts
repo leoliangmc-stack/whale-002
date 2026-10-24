@@ -48,6 +48,8 @@ export class ParticleManager {
   private screenVy = 0;
   private readonly sh: Shade = makeShade();
   quality!: QualitySettings;
+  /** 平滑变化的海洋雪数量（见 update） */
+  private snowQ = -1;
   /** 水体在世界中的累计偏移（米）：只有镜头相对水体的移动才让颗粒产生视差 */
   waterX = 0;
   waterY = 0;
@@ -69,6 +71,8 @@ export class ParticleManager {
 
   /** 镜头移动 → 颗粒视差位移（像素）。 */
   update(rc: RenderCtx, dt: number): void {
+    // 画质自动升降时，颗粒在一两秒内逐渐增减
+    this.snowQ = this.snowQ < 0 ? rc.quality.snow : this.snowQ + (rc.quality.snow - this.snowQ) * (1 - Math.exp(-dt * 1.5));
     const cam = rc.cam;
     const ppm = cam.ppm;
     const cx = cam.cx - this.waterX;
@@ -102,7 +106,7 @@ export class ParticleManager {
     const { ctx, cam, dpr, w, h } = rc;
     const depth = cam.cy;
     const dens = (0.3 + 0.7 * smoothstep(20, 600, depth)) * amount;
-    const n = Math.min(SNOW_MAX, Math.round(rc.quality.snow * dens));
+    const n = Math.min(SNOW_MAX, Math.round((this.snowQ < 0 ? rc.quality.snow : this.snowQ) * dens));
     if (n <= 0) return;
     const sh = this.sh;
     rc.light.shadeAt(cam.cx, depth, 0, sh);

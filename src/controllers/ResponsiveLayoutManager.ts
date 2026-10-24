@@ -60,8 +60,8 @@ export class ResponsiveLayoutManager {
     else device = minSide < 500 ? 'phone' : 'desktop';
     const aspect = w / h;
     const portrait = h > w * 1.05;
-    // 竖屏时开阔海域的构图沿对角线向上，让鲸鱼与磷虾群在窄画面中都清晰可辨
-    const compAngle = -0.05 - 0.68 * (1 - smoothstep(0.7, 1.25, aspect));
+    // 竖屏时开阔海域的构图沿对角线向上，让鲸鱼与前方的磷虾群在窄画面中都能放得下
+    const compAngle = -0.05 - 0.6 * (1 - smoothstep(0.7, 1.25, aspect));
     return { device, portrait, w, h, aspect, coarse, safe: this.safe(), compAngle };
   }
 }

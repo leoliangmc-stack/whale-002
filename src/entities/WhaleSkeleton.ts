@@ -12,6 +12,8 @@ import type { FinPose, WhaleState } from './Whale';
  *    脊柱随之落下，头骨只略微下沉；
  *  - 骨面上的生命：细菌席与食骨蠕虫长在骨头朝上的表面上，这些位置是从骨骼画的轮廓里找出来的；
  *  - 自由探索中的点击：把屏幕点换算回画中的像素，按所在区域判断是哪一类骨头。
+ * 鲸落肚子朝上躺在海床上（见 WhaleBody 的静卧姿态），骨骼画与身体画一样沿体轴上下翻转：
+ * 脊柱贴着海床，肋骨朝上，头骨倒扣着；“朝上的骨面”相应地是画中骨头的下缘。
  */
 
 export type BoneKind = 'skull' | 'mandible' | 'vertebra' | 'rib' | 'chevron' | 'scapula' | 'flipper' | 'pelvis';
@@ -115,6 +117,10 @@ export class WhaleSkeleton {
   private readonly p = { x: 0, y: 0 };
   private readonly slices: Slice[] = [];
   private anchors: Anchor[] | null = null;
+  /** 画面沿体轴上下翻转（肚子朝上）时为 −1 */
+  private flip = 1;
+  /** 附着点是按哪个朝向找出来的 */
+  private anchorsFlip = 0;
   /** 附着点在鲸鱼局部坐标中的位置：x, y, thMat, thOse, r, seed */
   private att = new Float32Array(0);
 
@@ -139,6 +145,7 @@ export class WhaleSkeleton {
     const L = WHALE_LEN;
     const f = this.f;
     const c = ground ? st.collapse : 0;
+    this.flip = st.roll >= Math.PI - 1e-3 ? -1 : 1;
     let lastX = 0;
     let lastY = 0;
     let lastS = 0;
@@ -191,13 +198,13 @@ export class WhaleSkeleton {
       }
       const fw = this.slices[Math.max(0, j - 1)];
       const bw = this.slices[Math.min(n - 1, j + 1)];
-      const col = (sampleProfile(COLUMN, sl.s) - axisPx(sl.s, this.p).y) * mpp;
+      const col = (sampleProfile(COLUMN, sl.s) - axisPx(sl.s, this.p).y) * mpp * this.flip;
       const at = (k: number, g: number) => g + k * (col - g);
       const yf = at((sl.ky + fw.ky) / 2, (sl.g + fw.g) / 2);
       const yb = at((sl.ky + bw.ky) / 2, (sl.g + bw.g) / 2);
       sl.sh = (yf - yb) / W;
     }
-    if (!this.anchors) this.buildAnchors();
+    if (!this.anchors || this.anchorsFlip !== this.flip) this.buildAnchors();
   }
 
   /** 按条带把骨骼画贴到弯曲（坍塌）的骨架上（使用 ctx 当前的局部变换）。 */
@@ -213,7 +220,8 @@ export class WhaleSkeleton {
     for (const sl of this.slices) {
       const cf = Math.cos(sl.a);
       const sf = Math.sin(sl.a);
-      const ky = sl.ky;
+      // 肚子朝上：画面沿体轴上下翻转
+      const ky = sl.ky * this.flip;
       const sh = sl.sh;
       // 画像素 → 体轴坐标 (U, V) → (u, v) = (U, sh·U + ky·V)·mpp + (0, by) → 局部坐标
       const a = mpp * (cf * ct - sf * (sh * ct - ky * stt));
@@ -255,7 +263,7 @@ export class WhaleSkeleton {
     const st = Math.sin(AXIS_ANGLE);
     const U = dx * ct + dy * st;
     const u = U * mpp;
-    const v = ((-dx * st + dy * ct) * sl.ky + U * sl.sh) * mpp + sl.by;
+    const v = ((-dx * st + dy * ct) * sl.ky * this.flip + U * sl.sh) * mpp + sl.by;
     const c = Math.cos(sl.a);
     const s = Math.sin(sl.a);
     out.x = sl.px + u * c - v * s;
@@ -281,7 +289,7 @@ export class WhaleSkeleton {
     const dy = ly - sl.py;
     const mpp = WHALE_LEN / AXIS_PX;
     const u = dx * c + dy * s;
-    const v = (-dx * s + dy * c - sl.by - sl.sh * u) / sl.ky;
+    const v = (-dx * s + dy * c - sl.by - sl.sh * u) / (sl.ky * this.flip);
     const ct = Math.cos(AXIS_ANGLE);
     const st = Math.sin(AXIS_ANGLE);
     const A = axisPx(sl.s, this.p);
@@ -291,18 +299,20 @@ export class WhaleSkeleton {
   }
 
   /**
-   * 在骨骼画中找出骨头朝上的表面（自上而下扫描时从透明进入骨头的位置），以及肋骨朝向尾部的边缘，
-   * 按骨骼类别各取一部分作为细菌席与食骨蠕虫的附着点。
+   * 在骨骼画中找出骨头朝上的表面（从上方扫描时从透明进入骨头的位置；肚子朝上时画面翻转，
+   * 朝上的是画中骨头的下缘），以及肋骨朝向尾部的边缘，按骨骼类别各取一部分作为细菌席与食骨蠕虫的附着点。
    */
   private buildAnchors(): void {
     const art = whaleArt();
     if (!art) return;
+    this.anchorsFlip = this.flip;
     const m: AlphaMask = art.skeletonMask;
     const at = (x: number, y: number) => (x < 0 || y < 0 || x >= m.w || y >= m.h ? 0 : m.data[y * m.w + x]);
     const found: Record<BoneKind, Array<[number, number]>> = { skull: [], mandible: [], vertebra: [], rib: [], chevron: [], scapula: [], flipper: [], pelvis: [] };
+    const up = this.flip;
     for (let x = 1; x < m.w; x += 2) {
-      for (let y = 2; y < m.h; y++) {
-        if (at(x, y - 2) < 60 && at(x, y) > 170) found[boneKindAt(x * m.step, y * m.step)].push([x * m.step, y * m.step + 2]);
+      for (let y = 2; y < m.h - 2; y++) {
+        if (at(x, y - 2 * up) < 60 && at(x, y) > 170) found[boneKindAt(x * m.step, y * m.step)].push([x * m.step, y * m.step + 2 * up]);
       }
     }
     for (let y = 1; y < m.h; y += 3) {

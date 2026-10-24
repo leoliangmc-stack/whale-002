@@ -149,9 +149,10 @@ describe('descent C/D: steady, heavy sinking', () => {
       expect(Math.abs(w.nod)).toBeLessThan(0.18);
       // 下沉时自下而上的水流把尾叶托向尾柄的延长线
       expect(Math.abs(w.fluke)).toBeLessThan(0.4);
+      // 胸鳍随相对水流偏转，幅度有限
       for (const f of [w.finN, w.finF]) {
-        expect(f).toBeGreaterThan(-0.15);
-        expect(f).toBeLessThan(0.5);
+        expect(f).toBeGreaterThan(-0.7);
+        expect(f).toBeLessThan(0.7);
       }
       if (samples[i].p > 0.37) {
         const dp = w.pitch - ext;
@@ -213,6 +214,27 @@ describe('descent: landing and hand-offs', () => {
         expect(Math.abs(vel(k, p - h, p) - vel(k, p, p + h)), `velocity ${k}@${p}`).toBeLessThan(0.14);
       }
     }
+  });
+
+  it('the camera never drops below the sinking whale, so it never seems to rise in the frame', () => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let p = 0.317; p <= 0.41; p += 5e-4) {
+      const f = tl.evaluate(p, -0.05);
+      const w = { ...f.whale1 };
+      const shot = { tx: 0, ty: 0, frameH: 0, sx: 0, sy: 0, elev: 0, lat: 0 };
+      StoryTimeline.shotFrom(f, w, w, 1.6, shot);
+      const cam = new Camera();
+      cam.setViewport(1440, 900);
+      cam.setShot(shot);
+      // 镜头最多略低于鲸鱼一点（斜侧面的微微仰视），不会沉到它下方去仰拍
+      expect(cam.cy - w.y, `p=${p.toFixed(4)}`).toBeLessThan(3);
+      const o = { x: 0, y: 0, s: 0 };
+      cam.project(w.x, w.y, w.z, o);
+      lo = Math.min(lo, o.y / 900);
+      hi = Math.max(hi, o.y / 900);
+    }
+    expect(hi - lo).toBeLessThan(0.08);
   });
 
   it('the camera follows with a little lag and never jumps', () => {
@@ -325,7 +347,7 @@ describe('descent: a graceful, quiet drift into the deep', () => {
     }
   });
 
-  it('the pectoral fins sway in the flow, hang down while belly-up, and are back in the painted pose before touchdown', () => {
+  it('the pectoral fins trail in the water flowing past the body, and are back in the painted pose before touchdown', () => {
     const range = (p0: number, p1: number) => {
       let lo = Infinity;
       let hi = -Infinity;
@@ -336,14 +358,15 @@ describe('descent: a graceful, quiet drift into the deep', () => {
       }
       return { lo, hi };
     };
-    // 翻身之前：随水流张开
+    // 翻身之前：向前滑行，沿体轴向后的水流把胸鳍顺向后方（向身体靠拢）
     const before = range(0.3, 0.315);
-    expect(before.lo).toBeGreaterThan(0.02);
-    expect(before.hi).toBeLessThan(0.3);
-    // 肚子朝上：垂向后下方，仍随水流轻轻摆动
-    const up = range(0.4, 0.423);
-    expect(up.lo).toBeGreaterThan(-2.6);
-    expect(up.hi).toBeLessThan(-1.8);
+    expect(before.lo).toBeGreaterThan(-0.3);
+    expect(before.hi).toBeLessThan(0.05);
+    expect(before.lo).toBeLessThan(-0.02);
+    // 肚子朝上、低头下沉：海水大致沿体轴从头流向尾，胸鳍被顺向体轴（不会垂下来），仍随水流轻轻摆动
+    const up = range(0.41, 0.44);
+    expect(up.lo).toBeGreaterThan(-0.65);
+    expect(up.hi).toBeLessThan(-0.1);
     expect(up.hi - up.lo).toBeGreaterThan(0.02);
     // 翻身途中胸鳍画在身体里（转动为 0），交接处没有跳变
     for (let p = 0.3; p < CONTACT_P; p += 2e-4) {
@@ -355,22 +378,24 @@ describe('descent: a graceful, quiet drift into the deep', () => {
     expect(whale(CONTACT_P).fin).toBe(0);
   });
 
-  it('rolls belly-up like the reference painting while it sinks, and back upright before touching down', () => {
+  it('rolls belly-up slowly while it sinks, stays belly-up, and lands on its back', () => {
     expect(whale(0.316).roll).toBe(0);
-    for (let p = 0.39; p <= 0.43; p += 0.005) expect(whale(p).roll, `p=${p.toFixed(3)}`).toBeCloseTo(Math.PI, 3);
+    for (let p = 0.41; p <= 0.6; p += 0.005) expect(whale(p).roll, `p=${p.toFixed(3)}`).toBeCloseTo(Math.PI, 2);
     // 一边下沉一边翻：开始翻身时已经在下沉，翻到一半时下沉速度已超过 1 m/s
-    const half = first(0.32, 0.4, (p) => whale(p).roll > Math.PI / 2);
+    const half = first(0.32, 0.41, (p) => whale(p).roll > Math.PI / 2);
     expect(flow(half).flowY).toBeGreaterThan(1);
-    expect(flow(first(0.32, 0.4, (p) => whale(p).roll > 0.05)).flowY).toBeGreaterThan(0.05);
-    expect(whale(0.485).roll).toBeLessThan(0.02);
-    expect(whale(CONTACT_P).roll).toBe(0);
-    // 转动缓慢：最快约 30°/s，整个翻身用十几秒
+    expect(flow(first(0.32, 0.41, (p) => whale(p).roll > 0.05)).flowY).toBeGreaterThan(0.05);
+    // 不再翻回来：着地时、静卧时都是肚子朝上
+    expect(whale(CONTACT_P).roll).toBeCloseTo(Math.PI, 3);
+    expect(whale(DESCENT_END).roll).toBe(Math.PI);
+    expect(whale(0.7).roll).toBe(Math.PI);
+    // 转动缓慢：最快约 10°/s，整个翻身用半分钟以上，开始与结束时更慢
     const s = sweep(0.31, CONTACT_P);
     for (let i = 1; i < s.length; i++) {
       const w = Math.abs(whale(s[i].p).roll - whale(s[i - 1].p).roll) / (s[i].t - s[i - 1].t);
-      expect(w, `p=${s[i].p.toFixed(4)}`).toBeLessThan(0.55);
+      expect(w, `p=${s[i].p.toFixed(4)}`).toBeLessThan(0.17);
     }
-    expect(secondsAt(first(0.31, 0.4, (p) => whale(p).roll > Math.PI - 0.05)) - secondsAt(first(0.31, 0.4, (p) => whale(p).roll > 0.05))).toBeGreaterThan(10);
+    expect(secondsAt(first(0.31, 0.42, (p) => whale(p).roll > Math.PI - 0.05)) - secondsAt(first(0.31, 0.42, (p) => whale(p).roll > 0.05))).toBeGreaterThan(28);
     // 肚子朝上时，侧视轮廓的上缘是腹部、下缘是背部；转到一半时看到的是腹面（上下对称、比侧面略宽）
     const b = new WhaleBody();
     const shapeAt = (roll: number) => b.compute({ swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest: 0, flex: 0, nod: 0, fluke: 0, arc: 0, roll, shrink: 0 });

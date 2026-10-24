@@ -122,6 +122,12 @@ const RAY_RES = 0.25;
 /** 记录下来、供颗粒判断是否在光里的光束数 */
 const MAX_BEAMS = 40;
 
+/**
+ * 每一层的基准光束数。光束画在 1/4 分辨率的图层上，开销很小，所以不随画质分级变化：
+ * 画质自动升降时光束的位置与数量保持不变，画面不会忽明忽暗。
+ */
+const RAY_COUNT = 8;
+
 const RAY_LAYERS = [
   { z: 150, count: 0.7, alpha: 0.07, width: 1.25, sway: 0.05, streak: 0, close: false },
   { z: 60, count: 1, alpha: 0.11, width: 0.85, sway: 0.07, streak: 0.5, close: false },
@@ -358,7 +364,7 @@ export class LightingManager {
 
   /** 从海面射入的流动光束（加色混合）：远中近三层、从上方扇形散开，柔和而不过曝。 */
   private paintRays(rc: RenderCtx, ctx: CanvasRenderingContext2D): void {
-    const { cam, w, h, time, quality } = rc;
+    const { cam, w, h, time } = rc;
     this.beamCount = 0;
     // 浅海光照：参考画面里密密的光柱从海面一直照到画面下缘
     const sl = this.sunlit;
@@ -376,7 +382,7 @@ export class LightingManager {
       // 近处的一层只在镜头靠近时出现：远景里它会与远处的光束叠成一团过亮的光斑
       const near = layer.close ? 1 - smoothstep(45, 90, cam.shot.frameH) : 1;
       if (near < 0.02) continue;
-      const n = Math.max(2, Math.round(quality.rays * layer.count * dense));
+      const n = Math.max(2, Math.round(RAY_COUNT * layer.count * dense));
       const s = cam.scaleAt(layer.z);
       const surfaceY = cam.py + (0 - cam.cy) * s;
       const topY = Math.max(-h * 0.1, surfaceY);
@@ -387,10 +393,11 @@ export class LightingManager {
       const camShift = -(cam.cx * s * 0.6);
       for (let i = 0; i < n; i++) {
         const seed = hash1(i * 7 + 3 + L * 101);
-        const sway = noise1(time * layer.sway + i * 3.1 + L * 17, 11 + L) * spacing * 0.45;
+        const sway = noise1(time * layer.sway * 0.6 + i * 3.1 + L * 17, 11 + L) * spacing * 0.35;
         const base = ((((i + seed * 0.6) * spacing + camShift + sway) % span) + span) % span - w * 0.4;
         const width = spacing * (0.35 + seed * 0.7) * layer.width;
-        const flick = 0.55 + 0.45 * (0.5 + 0.5 * noise1(time * 0.13 + seed * 50, 5 + L));
+        // 每束光的亮度只有很慢、很轻的起伏（海面的波浪让光柱缓缓变化），不会一闪一闪
+        const flick = 0.7 + 0.15 * (0.5 + 0.5 * noise1(time * 0.06 + seed * 50, 5 + L));
         const a = Math.min(1, layer.alpha * sun * flick * near * strong);
         // 扇形：光束的方向指向上方的太阳；越往下越宽
         const slope = (base - apexX) / (topY - apexY);

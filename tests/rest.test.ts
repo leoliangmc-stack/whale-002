@@ -1,20 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { secondsAt, WORLD } from '../src/config/stages';
+import { secondsAt } from '../src/config/stages';
 import { CONTACT_P } from '../src/systems/DescentMotion';
 import { StoryTimeline, Y_REST } from '../src/systems/StoryTimeline';
 import { FIN_LEN, Whale } from '../src/entities/Whale';
-import { REST_GROUND, restSpineDY, WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
+import { REST_GROUND, restSpineDY, UPPER, WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
+import { sampleProfile } from '../src/core/math';
 
 const tl = new StoryTimeline();
 
-/** 静卧姿态下的身体几何（局部坐标，+y 向下；海床在 y = REST_GROUND） */
+/** 静卧姿态下的身体几何（局部坐标，+y 向下；海床在 y = REST_GROUND）：肚子朝上 */
 function restBody(rest = 1): WhaleBody {
   const b = new WhaleBody();
-  b.compute({ swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest, flex: 0, nod: 0, fluke: 0, arc: 0, roll: 0, shrink: 0 });
+  b.compute({ swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest, flex: 0, nod: 0, fluke: 0, arc: 0, roll: Math.PI, shrink: 0 });
   return b;
 }
 
-/** s 处腹侧离海床的距离（负值为压入沉积物的深度） */
+/** s 处着地一侧（肚子朝上时是背部）离海床的距离（负值为压入沉积物的深度） */
 function gapAt(b: WhaleBody, s: number): number {
   const p = b.belly(s, { x: 0, y: 0 });
   return REST_GROUND - p.y;
@@ -29,25 +30,31 @@ function maxGap(b: WhaleBody, s0: number, s1: number): number {
 describe('rest pose: weight and contact', () => {
   const b = restBody();
 
-  it('the heavy chest and belly press into the soft sediment, but only a little', () => {
+  it('lies belly-up: the broad back presses into the soft sediment, but only a little', () => {
+    // 着地的是背侧的轮廓
+    const i = b.indexAt(0.42);
+    expect(b.lo[i]).toBeCloseTo(sampleProfile(UPPER, b.s[i]), 2);
     const sink = -Math.min(gapAt(b, 0.3), gapAt(b, 0.38), gapAt(b, 0.46));
     expect(sink).toBeGreaterThan(0.2);
     expect(sink).toBeLessThan(0.69);
   });
 
   it('no part of the body hovers evenly above the seabed', () => {
-    // 从下颌到尾端，最大的悬空只出现在尾柄下方那道拱形的缝隙里，而且不超过 0.85 米
-    expect(maxGap(b, 0.1, 1)).toBeLessThan(0.85);
-    // 下颌接近海床，吻端自然地微微翘起，但没有抬头
-    expect(gapAt(b, 0.1)).toBeLessThan(0.43);
-    expect(gapAt(b, 0.015)).toBeLessThan(1.54);
+    // 从头顶到尾端都贴着海床，没有悬空的一段
+    expect(maxGap(b, 0.1, 1)).toBeLessThan(0.45);
+    // 沉重的头骨放低、头顶贴着海床，吻端尖自然地微微翘起
+    expect(Math.abs(gapAt(b, 0.1))).toBeLessThan(0.3);
+    expect(gapAt(b, 0.015)).toBeGreaterThan(0.1);
+    expect(gapAt(b, 0.015)).toBeLessThan(0.8);
   });
 
-  it('the tail stock arches down to the seabed, leaving a gap that narrows toward the fluke', () => {
-    const arch = maxGap(b, 0.62, 0.86);
-    expect(arch).toBeGreaterThan(0.34);
-    expect(Math.abs(gapAt(b, 1))).toBeLessThan(0.21);
-    expect(gapAt(b, 0.97)).toBeLessThan(arch - 0.26);
+  it('the tail stock rests on its keel and the flukes reach the seabed', () => {
+    // 尾柄以背脊着地，压进软泥不深（很小的背鳍在 0.76~0.81 之间，可以压得更深一点）
+    for (const [a, c] of [[0.6, 0.75], [0.82, 0.98]]) {
+      for (let s = a; s <= c; s += 0.01) expect(gapAt(b, s), `s=${s.toFixed(2)}`).toBeGreaterThan(-0.45);
+    }
+    for (let s = 0.76; s <= 0.81; s += 0.01) expect(gapAt(b, s)).toBeGreaterThan(-0.85);
+    expect(Math.abs(gapAt(b, 0.99))).toBeLessThan(0.21);
   });
 
   it('is gently curved, not a straight log, and head and tail are not on one line', () => {
@@ -98,28 +105,30 @@ describe('rest pose: the painted flipper', () => {
   const w = new Whale(1);
   tl.whaleAt(0.54, w.state);
   w.prepare();
-  // 画中的胸鳍贴着身体，随身体一起落下：鳍尖比腹部略低，落在镜头一侧的软泥上
+  /** 鳍尖的世界 y（含翻身与胸鳍的转动） */
   const tip = (v: Whale) => {
     const root = v.finRoot({ x: 0, y: 0 });
-    const a = v.finPose.a;
+    const a = v.finDir();
     const lx = root.x + FIN_LEN * Math.cos(a);
     const ly = root.y + FIN_LEN * Math.sin(a);
     return v.state.y + lx * Math.sin(v.state.pitch) + ly * Math.cos(v.state.pitch);
   };
 
-  // 侧视中鳍尖可以略低于着地线：它落在镜头一侧的软泥上，压进去的部分被近侧隆起的软泥边缘挡住
-  it('rests on the sediment in front of the body without digging deep into it', () => {
-    const y = tip(w);
-    expect(y).toBeGreaterThan(WORLD.seabedY - 0.3);
-    expect(y).toBeLessThan(WORLD.seabedY + 1.1);
+  // 肚子朝上：胸鳍保持画中的姿态（与之后露出的鳍骨一致），从朝上的腹侧斜向后上方伸进水里
+  it('lies belly-up with the flipper in its natural pose, reaching up from the belly side', () => {
+    expect(w.state.roll).toBe(Math.PI);
+    expect(w.state.fin).toBe(0);
+    const root = w.finRoot({ x: 0, y: 0 });
+    expect(root.y).toBeLessThan(0);
+    expect(tip(w)).toBeLessThan(w.state.y + root.y);
   });
 
-  it('never cuts deep into the seabed while the whale is still approaching', () => {
+  it('never cuts into the seabed while the whale is approaching and settling', () => {
     const v = new Whale(1);
     for (let p = 0.48; p <= 0.52; p += 0.0005) {
       tl.whaleAt(p, v.state);
       v.prepare();
-      expect(tip(v), `p=${p.toFixed(4)}`).toBeLessThan(v.state.seabed + 1.1);
+      expect(tip(v), `p=${p.toFixed(4)}`).toBeLessThan(v.state.seabed - 0.5);
     }
   });
 });

@@ -69,10 +69,10 @@ export const SEGMENTS: Segment[] = [
   { from: 0.245, to: 0.285, seconds: 12, key: true }, // 眼睛闭合
   { from: 0.285, to: 0.297, seconds: 4, key: true }, // 闭眼后的停留
   // 下沉是一段连续动作（见 systems/DescentMotion.ts），各段时长决定了动作的真实节奏
-  { from: 0.297, to: 0.322, seconds: 13, key: true }, // A：尾鳍渐停、向前滑行（侧面中远景 → 仰视）
-  { from: 0.322, to: 0.345, seconds: 12, key: true }, // B：头部先沉、身体缓缓倾斜（斜侧面跟随）
-  { from: 0.345, to: 0.46, seconds: 27 }, // C → D：稳定下沉，镜头拉远进入深海
-  { from: 0.46, to: 0.51, seconds: 14, key: true }, // 接近并接触海床
+  { from: 0.297, to: 0.322, seconds: 13, key: true }, // A：尾鳍渐停、向前滑行（侧面中远景）
+  { from: 0.322, to: 0.345, seconds: 16, key: true }, // B：开始下沉，头部先沉，一边下沉一边缓缓翻身（斜侧面跟随）
+  { from: 0.345, to: 0.46, seconds: 46 }, // C → D：翻成肚子朝上，保持这个姿态稳定下沉，镜头拉远进入深海
+  { from: 0.46, to: 0.51, seconds: 16, key: true }, // 接近并接触海床（肚子朝上，背部着地）
   { from: 0.51, to: 0.55, seconds: 8 },
   { from: 0.55, to: 0.7, seconds: 32, key: true }, // 身体变化
   { from: 0.7, to: 0.8, seconds: 26, key: true }, // 鲸骨生态

@@ -1,9 +1,9 @@
 import type { Shade } from '../../core/color';
-import { clamp, damp, lerp, rng, sampleProfile, TAU } from '../../core/math';
+import { clamp, damp, rng, sampleProfile, TAU } from '../../core/math';
 import type { RenderCtx } from '../../core/types';
 import { WORLD } from '../../config/stages';
 import type { EcoState } from '../../systems/StoryTimeline';
-import { REST_GROUND, restSpineDY, S_REF, UPPER, WHALE_LEN } from '../WhaleBody';
+import { LOWER, REST_GROUND, restSpineDY, S_REF, WHALE_LEN } from '../WhaleBody';
 
 /**
  * 深海生物的公共基类。
@@ -134,29 +134,33 @@ export abstract class Creature {
 
 // ------------------------------------------------------------------ 鲸落现场的近似几何
 
-/** 静卧鲸鱼尸体在 x 处的背部高度（未分解时）。 */
+/** 静卧鲸鱼尸体在 x 处的顶面高度（未分解时）：肚子朝上，顶面是腹部。 */
 export function carcassTop(x: number, shrink = 0): number {
   const s = S_REF - (x - REST_X) / WHALE_LEN;
   if (s < 0 || s > 1) return SEABED;
-  const up = sampleProfile(UPPER, s);
+  const up = sampleProfile(LOWER, s);
   const spine = Y_REST + restSpineDY(s);
-  return spine - up * (1 - 0.42 * shrink);
+  return spine - up * (1 - 0.3 * shrink);
 }
 
 export const CARCASS_X0 = REST_X - (1 - S_REF) * WHALE_LEN + 1.03;
 export const CARCASS_X1 = REST_X + S_REF * WHALE_LEN - 0.51;
 
+/**
+ * 坍塌后骨骼顶面离海床的高度（米）：肚子朝上，倒扣的头骨上方是下颌骨，胸腔里朝上的肋骨摊开后变矮，
+ * 尾椎贴着海床。由骨骼画中每一列骨头的下缘（翻过来之后朝上）按坍塌的压缩量出（WhaleSkeleton.prepare）。
+ */
+const BONE_TOP: ReadonlyArray<readonly [number, number]> = [
+  [0, 1.3], [0.05, 1.6], [0.1, 1.8], [0.15, 2.0], [0.2, 2.25], [0.25, 2.33], [0.3, 2.3], [0.35, 2.15], [0.4, 1.62],
+  [0.45, 1.55], [0.5, 1.45], [0.55, 1.35], [0.6, 0.95], [0.65, 0.62], [0.75, 0.72], [0.8, 0.72], [0.85, 0.9],
+  [0.9, 0.78], [0.95, 0.65], [1, 0.52],
+];
+
 /** 坍塌后骨骼顶面的近似高度（用于在骨头上爬行的小动物）。 */
 export function boneTop(x: number): number {
   const s = S_REF - (x - REST_X) / WHALE_LEN;
   if (s < 0 || s > 1) return SEABED;
-  if (s < 0.3) {
-    // 头骨：吻端低、颅顶高
-    const t = s / 0.3;
-    return lerp(SEABED - 2.31, Y_REST - 1.06, Math.pow(t, 0.8));
-  }
-  if (s < 0.9) return lerp(Y_REST - 0.21, SEABED - 0.55, Math.pow((s - 0.3) / 0.6, 1.6));
-  return SEABED - 0.26;
+  return SEABED - sampleProfile(BONE_TOP, s);
 }
 
 // ------------------------------------------------------------------ 发光精灵缓存

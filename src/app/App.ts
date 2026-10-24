@@ -5,7 +5,7 @@ import { CameraController } from '../controllers/CameraController';
 import { InputController, type InputMode } from '../controllers/InputController';
 import { ResponsiveLayoutManager } from '../controllers/ResponsiveLayoutManager';
 import { StoryProgressController } from '../controllers/StoryProgressController';
-import { clamp, window4 } from '../core/math';
+import { clamp, smoothstep, window4 } from '../core/math';
 import { storage, type Prefs, type QualityPref } from '../core/storage';
 import type { RenderCtx } from '../core/types';
 import { loadWhaleArt, whaleArt } from '../entities/WhaleArt';
@@ -56,6 +56,7 @@ export class App {
   private infoTarget: { x: number; y: number; z: number } | null = null;
   private following = false;
   private storyReturnP = 0;
+  private audioLoading = false;
   private readonly params = new URLSearchParams(location.search);
   private systemReduced = matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -210,7 +211,7 @@ export class App {
       jump: (p: number) => this.dissolve(() => this.progress.jumpTo(p)),
       toggleMute: () => {
         this.prefs.muted = !this.prefs.muted;
-        void this.audio.unlock().then(() => this.audio.setMuted(this.prefs.muted));
+        void this.unlockAudio();
         this.audio.setMuted(this.prefs.muted);
         this.savePrefs();
       },
@@ -259,12 +260,20 @@ export class App {
     };
   }
 
+  /** 在用户手势中解锁声音，并加载声音素材（只加载一次） */
+  private async unlockAudio(): Promise<void> {
+    await this.audio.unlock();
+    this.audio.setMuted(this.prefs.muted);
+    this.audio.setVolume(this.prefs.volume);
+    if (!this.audioLoading) {
+      this.audioLoading = true;
+      await this.assets.loadAudio(this.audio);
+      this.audio.samplesReady();
+    }
+  }
+
   private start(explore: boolean): void {
-    void this.audio.unlock().then(() => {
-      this.audio.setMuted(this.prefs.muted);
-      this.audio.setVolume(this.prefs.volume);
-      void this.assets.loadAudio(this.audio);
-    });
+    void this.unlockAudio();
     if (explore) {
       this.mode = 'story';
       this.enterExplore();
@@ -453,6 +462,8 @@ export class App {
     }
 
     const near = this.mode === 'story' ? clamp(1 - Math.abs(depth) / 30) : 0;
+    const sf = this.mode === 'story' ? this.narrative.frame : null;
+    const mover = p < 0.5 ? this.world.whale1 : this.world.whale2;
     this.audio.update(dt, {
       mode: this.mode,
       p,
@@ -460,6 +471,11 @@ export class App {
       surface: Math.max(near, this.world.render.surface ? this.world.render.surface.aerial : 0),
       paused,
       velocity: this.progress.velocity,
+      sink: sf && p > 0.3 && p < 0.5 ? Math.max(0, sf.water.flowY) : 0,
+      // 近景里的拍尾：镜头越近越响
+      stroke: { phase: mover.phase, amp: mover.state.swim * mover.state.visible, near: 1 - smoothstep(22, 70, this.camera.cam.shot.frameH) },
+      scav: sf ? sf.eco.scav : 0,
+      amph: sf ? sf.eco.amph : 0,
     });
 
     const dA = window4(p, 0.3, 0.315, 0.53, 0.555) + window4(p, 0.83, 0.845, 0.94, 0.955);

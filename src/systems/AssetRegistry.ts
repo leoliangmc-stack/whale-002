@@ -23,8 +23,14 @@ export interface AssetManifest {
 
 export class AssetRegistry {
   manifest: AssetManifest = {};
+  private loaded: Promise<void> | null = null;
 
-  async load(base = './assets/'): Promise<void> {
+  load(base = './assets/'): Promise<void> {
+    this.loaded ??= this.loadManifest(base);
+    return this.loaded;
+  }
+
+  private async loadManifest(base: string): Promise<void> {
     try {
       const res = await fetch(base + 'manifest.json', { cache: 'no-cache' });
       if (!res.ok) return;
@@ -51,6 +57,7 @@ export class AssetRegistry {
 
   /** 在音频解锁后加载正式音频。 */
   async loadAudio(audio: AudioManager, base = './assets/'): Promise<void> {
+    await this.load(base);
     const ctx = audio.context;
     const list = this.manifest.audio;
     if (!ctx || !list) return;

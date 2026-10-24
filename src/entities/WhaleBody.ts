@@ -11,8 +11,8 @@ import { ART_EYE_S } from './WhaleArt';
  *  - 滤食：下颌绕颌关节张开，喉腹褶向下鼓起（画面在游动与张嘴两张画之间过渡）；
  *  - 下沉：头尾从胸腹部垂下的弓形（见 archAngle），以及尾柄、尾叶与头部的被动弯曲
  *    （由下沉动作层给出，见 systems/DescentMotion.ts）；
- *  - 静卧：躯干压入海底软泥，头部微微放低，尾柄顺着重量缓缓垂向海床，身体略向镜头一侧侧倾
- *    （见 restSpineDY / restRoll）。
+ *  - 静卧：肚子朝上躺在海床上（下沉途中翻过来之后不再翻回），背部压入海底软泥，沉重的头骨放低，
+ *    尾柄顺着重量垂向海床，身体略向镜头一侧侧倾（见 restSpineDY / restRoll）。
  * 鲸鱼骨骼使用同一条脊线定位，保证分解时骨骼与身体严格对齐。
  */
 
@@ -199,20 +199,20 @@ const MOUTH: Profile = [
 ];
 
 // ------------------------------------------------------------------ 静卧姿态
-// 一头几十吨重的身体落在软泥上：最重的胸腹部压进沉积物，头部顺着重量微微放低（下颌接近海床），
-// 窄而长的尾柄缓缓垂向海床，在尾柄下方留下一道逐渐变窄的缝隙，尾叶贴近海床。
+// 下沉时翻过来的身体肚子朝上落在软泥上：宽阔的背部压进沉积物，沉重的头骨顺着重量放低（头顶贴着海床，
+// 吻端尖微微翘起），窄而长的尾柄垂向海床、以背脊着地，尾叶落在海床上。很小的背鳍压进软泥里。
 // 所有弯曲都是平滑的长弧线，躯干保持完整的解剖轮廓，不做压扁或拉伸。
 
-/** 静卧时海床在鲸鱼局部坐标中的 y（参考点到海床的距离，米） */
-export const REST_GROUND = 2.41;
-/** 胸腹部压入沉积物的深度（米） */
-const REST_SINK = 0.34;
+/** 静卧时海床在鲸鱼局部坐标中的 y（参考点到海床的距离，米）：肚子朝上时着地的是背侧的轮廓 */
+export const REST_GROUND = 2.2;
+/** 背部压入沉积物的深度（米） */
+const REST_SINK = 0.32;
 /** 整体极轻的低头（每米体长的下沉量）：头骨更重，前半身压得更深 */
-const REST_TILT = 0.01;
-/** 头部在颈部附近平滑放低（米，吻端处） */
-const REST_HEAD = 0.77;
-/** 尾柄下垂（米，尾端处）：尾柄像一道低矮的拱，下方留出逐渐变窄的缝隙，尾叶落在海床上 */
-const REST_TAIL = 1.4;
+const REST_TILT = 0.006;
+/** 头部在颈部附近平滑放低（米，吻端处）：头背侧的轮廓比腹侧低得多，头骨要放得更低才贴着海床 */
+const REST_HEAD = 1.1;
+/** 尾柄下垂（米，尾端处）：背侧的轮廓向尾部收得很快，尾柄顺着一道越来越弯的弧线垂下，尾叶落在海床上 */
+const REST_TAIL = 1.55;
 /** 身体向镜头一侧的侧倾（弧度）：近侧着地，背部稍稍转向镜头 */
 export const REST_ROLL = 0.2;
 
@@ -226,9 +226,9 @@ export function restSpineDY(s: number, r = 1): number {
   const eh = smoothstep(0.12, 0.72, r);
   const et = smoothstep(0.3, 0.9, r) + 0.04 * Math.sin(Math.PI * smoothstep(0.75, 1, r));
   const head = 1 - smoothstep(0.04, 0.42, s);
-  // 尾柄：大部分是平缓的长弧，末端仍略向下倾斜（不在尾叶前急转），尾叶自己顺着关节平放在海床上
+  // 尾柄：前段几乎平放（背脊着地），越靠近尾叶弯得越多，末端略向下倾斜，尾叶自己顺着关节平放在海床上
   const u = clamp((s - 0.42) / 0.58);
-  const tail = 0.7 * Math.pow(u * u * (3 - 2 * u), 2.6) + 0.3 * u * u * u;
+  const tail = 0.55 * Math.pow(u * u * (3 - 2 * u), 3.4) + 0.45 * u * u * u;
   return (
     eb * (REST_SINK + REST_TILT * (S_REF - s) * WHALE_LEN) +
     eh * REST_HEAD * head * head +
@@ -359,7 +359,7 @@ export class WhaleBody {
   readonly lo: Float32Array;
   /** 每个采样处的侧倾（弧度，静卧时） */
   readonly rl: Float32Array;
-  /** 未收缩（分解前）的腹侧深度：鲸鱼在海床上压出的印痕始终按完整的身体计算 */
+  /** 未收缩（分解前）的下缘深度（翻身后按转动后的截面）：鲸鱼在海床上压出的印痕始终按完整的身体计算 */
   readonly lo0: Float32Array;
   /** 外轮廓点：背侧与腹侧（已含张嘴、鼓喉） */
   readonly ux: Float32Array;
@@ -414,9 +414,10 @@ export class WhaleBody {
     if (amp === 0) return 0;
     const env = 0.04 + 0.96 * Math.pow(smoothstep(0.32, 1, s), 1.5);
     let dy = 1.06 * amp * env * Math.sin(ph - Math.PI * 2 * 0.72 * s);
-    dy -= 0.12 * amp * Math.sin(ph + 0.7) * (1 - smoothstep(0, 0.45, s));
-    // 惯性：每次拍尾后，整个身体随之轻微起伏（滞后于尾叶），并带有很小的俯仰
-    dy += amp * (0.15 * Math.sin(ph - 1.3) + 0.13 * Math.sin(ph - 0.9) * (s - S_REF));
+    dy -= 0.045 * amp * Math.sin(ph + 0.7) * (1 - smoothstep(0, 0.45, s));
+    // 惯性：每次拍尾后，整个身体随之极轻微地起伏（滞后于尾叶），并带有很小的俯仰。
+    // 上百吨的身体几乎不随尾叶上下，近景中头部的起伏只有几厘米
+    dy += amp * (0.05 * Math.sin(ph - 1.3) + 0.07 * Math.sin(ph - 0.9) * (s - S_REF));
     return dy;
   }
 
@@ -486,7 +487,8 @@ export class WhaleBody {
       const si = s[i];
       let u = sampleProfile(UPPER, si);
       let l = sampleProfile(LOWER, si);
-      this.lo0[i] = l;
+      // 未分解时下缘的深度：翻过来之后（肚子朝上）着地的是背侧
+      this.lo0[i] = sh.roll !== 0 ? rolledExtent(sh.roll, u, l, sampleProfile(DORSAL, si), this.ext).bot : l;
       if (shrinkU > 0) {
         // 软组织减少：轮廓向骨骼收缩（但保留整体形状）
         u = u * (1 - 0.42 * shrinkU);

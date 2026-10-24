@@ -8,9 +8,18 @@ import type { KrillState } from '../systems/StoryTimeline';
  * 磷虾群。每只磷虾的位置 = 群体中心 + 椭球内的“家位置” × 群体形状 + 个体噪声漂移。
  * 群体参数（中心、形状、聚集度、捕食进度）全部来自叙事时间线，因此倒放时
  * 被吞入的磷虾会自然“回到”群体中；个体的小幅运动使用氛围时钟，彼此不同步。
+ *
+ * 滤食：时间线把虾团对准张开的嘴（群体的长轴就是鲸鱼前进的方向）。只有离这条轴不远、
+ * 正好在嘴的范围内的磷虾会被吞下——随着涌进嘴里的水流先向轴线收拢（喇叭口），再越来越快地被吸进嘴里，
+ * 被拉成细长的一道；嘴的范围之外的磷虾被头部推开的水流带向两侧，然后散开，不会穿过身体。
  */
 
 const MAX = 1500;
+/** 张开的嘴吞下的范围：离前进方向的轴线不超过这个距离（米，侧视中的上下与前后方向） */
+const ENGULF_R = 3.4;
+/** 身体的侧视半高（米，含鼓起的喉囊）与半宽：没被吞下的磷虾绕过身体 */
+const BODY_H = 2.7;
+const BODY_W = 2.6;
 /** 零星磷虾（磷虾群出现之前，从鲸鱼头部前方漂过） */
 const STRAYS = 12;
 /**
@@ -38,6 +47,11 @@ export class KrillSwarm {
   private readonly sp = new Float32Array(MAX);
   private readonly sz = new Float32Array(MAX);
   private readonly eatTh = new Float32Array(MAX);
+  /** 是否在张开的嘴的范围内（0/1，边缘处按个体略有不同） */
+  private readonly inMouth = new Float32Array(MAX);
+  /** 平滑变化的数量：画质自动升降时，磷虾在一两秒内逐渐增减，而不是一下子少掉一半 */
+  private countF = -1;
+  private lastTime = 0;
   private readonly order = new Float32Array(MAX);
   // 每帧结果
   private readonly px = new Float32Array(MAX);
@@ -54,9 +68,11 @@ export class KrillSwarm {
   private readonly sang = new Float32Array(STRAYS);
   private readonly sh: Shade = makeShade();
   state: KrillState | null = null;
-  /** 嘴部位置（世界坐标），由鲸鱼提供 */
-  mouth = { x: 0, y: 0, z: 0, open: 0 };
+  /** 嘴部位置（世界坐标）、张开程度与前进方向（弧度），由鲸鱼提供 */
+  mouth = { x: 0, y: 0, z: 0, open: 0, a: 0 };
   snout = { x: -999, y: 0 };
+  /** 鲸鱼身体参考点与体长方向的范围（米，参考点之前 / 之后），没被吞下的磷虾绕开身体 */
+  body = { x: 0, y: 0, front: 10.1, back: 13.9 };
 
   constructor() {
     for (let i = 0; i < MAX; i++) {
@@ -80,6 +96,8 @@ export class KrillSwarm {
       this.order[i] = hash1(i * 19 + 3);
       // 被吞阈值：群体沿游动方向（朝向鲸鱼）的前缘先被吞入
       this.eatTh[i] = clamp(0.04 + (1 - x) * 0.33 + hash1(i * 23) * 0.2);
+      // 嘴的范围按冲刺滤食时的群体形状（见 StoryTimeline 的 ry / rz）判断，每只磷虾固定，倒放时同样可逆
+      this.inMouth[i] = Math.hypot(y * 4.8, z * 5.2 * 0.9) < ENGULF_R * (0.85 + 0.3 * hash1(i * 29 + 4)) ? 1 : 0;
     }
     for (let i = 0; i < STRAYS; i++) {
       this.strayOff[i * 4] = -1.5 + (i / (STRAYS - 1)) * 8.5 + (hash1(i * 41 + 1) - 0.5) * 0.8;
@@ -91,7 +109,10 @@ export class KrillSwarm {
 
   update(st: KrillState, time: number, count: number, reduced: boolean): void {
     this.state = st;
-    this.count = Math.min(MAX, count);
+    const dt = Math.min(0.1, Math.max(0, time - this.lastTime));
+    this.lastTime = time;
+    this.countF = this.countF < 0 ? count : this.countF + (count - this.countF) * (1 - Math.exp(-dt * 1.5));
+    this.count = Math.min(MAX, Math.ceil(this.countF));
     if (st.stray > 0.001) {
       const k = reduced ? 0.5 : 1;
       for (let i = 0; i < STRAYS; i++) {
@@ -108,11 +129,16 @@ export class KrillSwarm {
     // 群体朝向：沿 heading 方向拉长
     const ch = Math.cos(st.heading);
     const shd = Math.sin(st.heading);
+    // 鲸鱼的前进方向与嘴
+    const m = this.mouth;
+    const ha = Math.cos(m.a);
+    const hb = Math.sin(m.a);
+    const b = this.body;
     const wander = lerp(2.6, 0.55, st.agg) * (reduced ? 0.5 : 1);
     const breathe = 1 + 0.07 * Math.sin(time * 0.31);
     const speedK = reduced ? 0.5 : 1;
     for (let i = 0; i < n; i++) {
-      const vis = clamp((st.visible - this.order[i] * 0.98) * 18);
+      const vis = clamp((st.visible - this.order[i] * 0.98) * 18) * clamp(this.countF - i);
       this.alpha[i] = vis;
       if (vis <= 0) continue;
       const t = time * 0.22 * this.sp[i] * speedK + this.ph[i];
@@ -132,29 +158,45 @@ export class KrillSwarm {
         y += this.hy[i] * k * 2.2;
         z += this.hz[i] * k * 2;
       }
-      // 躲避鲸鱼吻部
-      const sx = x - this.snout.x;
-      const sy = y - this.snout.y;
-      const sd2 = sx * sx + sy * sy;
-      if (sd2 < 30) {
-        const sd = Math.sqrt(sd2) + 0.01;
-        const push = (1 - sd / 5.5) * 1.6 * (1 - st.feed * 0.5);
-        if (push > 0) {
-          x += (sx / sd) * push;
-          y += (sy / sd) * push;
-        }
-      }
-      // 被吞入：沿水流被吸进张开的嘴
+      // 被吞入：只有嘴的范围内的磷虾，前缘先被吞下
       let c = 0;
-      if (st.feed > 0) {
-        c = smoothstep(this.eatTh[i], this.eatTh[i] + 0.2, st.feed);
-        if (c > 0) {
-          const e = c * c * (3 - 2 * c);
-          const mx = this.mouth.x + this.hx[i] * 1.1 - 0.4;
-          const my = this.mouth.y + this.hy[i] * 0.7;
-          x = lerp(x, mx, e);
-          y = lerp(y, my, e);
-          z = lerp(z, this.mouth.z + this.hz[i] * 0.3, e);
+      if (st.feed > 0 && this.inMouth[i] > 0) c = smoothstep(this.eatTh[i], this.eatTh[i] + 0.16, st.feed);
+      if (c > 0) {
+        // 相对嘴的坐标：沿前进方向 d、垂直于前进方向 lat；涌进嘴里的水流先把它向轴线收拢（喇叭口），
+        // 再越来越快地把它拉进嘴里（c² ：开始时几乎不动，最后一下子被吸进去）
+        const rx0 = x - m.x;
+        const ry0 = y - m.y;
+        const d = rx0 * ha + ry0 * hb;
+        const lat = -rx0 * hb + ry0 * ha;
+        const conv = smoothstep(0, 0.75, c);
+        const d2 = lerp(d, -1.1 + 0.5 * this.hx[i], c * c);
+        const lat2 = lat * (1 - conv) + this.hy[i] * 0.6 * conv;
+        x = m.x + d2 * ha - lat2 * hb;
+        y = m.y + d2 * hb + lat2 * ha;
+        z = lerp(z, m.z + this.hz[i] * 0.4, conv);
+      } else {
+        // 躲避鲸鱼吻部
+        const sx = x - this.snout.x;
+        const sy = y - this.snout.y;
+        const sd2 = sx * sx + sy * sy;
+        if (sd2 < 30) {
+          const sd = Math.sqrt(sd2) + 0.01;
+          const push = (1 - sd / 5.5) * 1.6;
+          if (push > 0) {
+            x += (sx / sd) * push;
+            y += (sy / sd) * push;
+          }
+        }
+        // 没被吞下、离身体太近的磷虾被头部推开的水流带到身体两侧（前方或后方），不会穿过身体
+        if (st.feed > 0 || st.align > 0.5) {
+          const bx = x - b.x;
+          const by = y - b.y;
+          const along = bx * ha + by * hb;
+          const across = -bx * hb + by * ha;
+          const w = smoothstep(-b.back, -b.back + 4, along) * (1 - smoothstep(b.front, b.front + 2.5, along)) * (1 - smoothstep(BODY_H, BODY_H + 1.2, Math.abs(across)));
+          const dz = z - m.z;
+          const need = BODY_W * w;
+          if (Math.abs(dz) < need) z = m.z + (dz >= 0 ? need : -need);
         }
       }
       this.cap[i] = c;
@@ -211,11 +253,14 @@ export class KrillSwarm {
       const alpha = a * (1 - fog) * (captured ? 1 - smoothstep(0.85, 1, c) : 1);
       if (alpha <= 0.02) continue;
       if (L < 2.6) {
-        // 远处：小点
+        // 远处：小点（被吸入时沿水流拉长）
         const r = Math.max(0.75, L * 0.45);
+        const sk = c > 0.02 ? 1 + 2.6 * c * c : 1;
         ctx.globalAlpha = alpha * Math.min(1, L * 0.5 + 0.5);
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.fillRect(P.x - r, P.y - r * 0.6, r * 2, r * 1.2);
+        const ca = Math.cos(this.ang[i]);
+        const sa = Math.sin(this.ang[i]);
+        ctx.setTransform(ca * dpr * sk, sa * dpr * sk, -sa * dpr, ca * dpr, P.x * dpr, P.y * dpr);
+        ctx.fillRect(-r, -r * 0.6, r * 2, r * 1.2);
         dots++;
         continue;
       }
@@ -224,8 +269,10 @@ export class KrillSwarm {
       const sin = Math.sin(ang);
       const flip = cos < 0 ? -1 : 1;
       const k = (L / tw) * dpr;
+      // 被吸进嘴里的磷虾随越来越快的水流被拉成细长的一道
+      const sk = c > 0.02 ? 1 + 2.6 * c * c * (1 - smoothstep(0.75, 1, c)) : 1;
       // 头朝运动方向；朝左时垂直翻转以保持背部朝上
-      ctx.setTransform(cos * k, sin * k, -sin * k * flip, cos * k * flip, P.x * dpr, P.y * dpr);
+      ctx.setTransform(cos * k * sk, sin * k * sk, (-sin * k * flip) / Math.sqrt(sk), (cos * k * flip) / Math.sqrt(sk), P.x * dpr, P.y * dpr);
       ctx.globalAlpha = alpha * Math.min(1, light + 0.15);
       ctx.drawImage(tex, -tw / 2, -th / 2);
     }
@@ -277,19 +324,33 @@ export class KrillSwarm {
       const q = SPECKS[j];
       const z = st.z + q.z * st.rz;
       if (layer === 'behind' ? z <= zSplit : z > zSplit) continue;
-      // 鲸鱼张嘴吞下时，前缘的虾群先消失
+      // 鲸鱼张嘴吞下时，前缘的虾群先被吞下：正对着嘴的几层随水流收拢、被拉长着吸进嘴里，
+      // 嘴的范围之外的几层只是变稀、随后散开
       const eaten = smoothstep(0.1 + 0.55 * (1 - q.f), 0.4 + 0.55 * (1 - q.f), st.feed);
+      const onAxis = 1 - smoothstep(ENGULF_R * 0.6, ENGULF_R * 1.5, Math.hypot(q.y * 4.8, q.z * 5.2 * 0.9));
+      const suck = onAxis * eaten;
       const spread = 1 + st.scatter * (1.4 + q.r);
       const lx = (q.x + 0.06 * Math.sin(time * 0.05 + j * 1.7)) * st.rx * spread;
       const ly = (q.y + 0.06 * Math.cos(time * 0.04 + j * 2.3)) * st.ry * spread;
-      if (!cam.project(st.x + lx * ch - ly * shd, st.y + lx * shd + ly * ch, z, P)) continue;
-      const fog = clamp(1 - Math.exp(-Math.max(0, z - cam.cz - cam.dist * 0.6) / Math.max(10, rc.light.vis)));
-      const a = base * (1 - eaten) * (1 - fog) * 0.7;
+      let wx = st.x + lx * ch - ly * shd;
+      let wy = st.y + lx * shd + ly * ch;
+      let wz = z;
+      let rot = st.heading + 0.25 * Math.sin(time * 0.02 + j);
+      if (suck > 0.001) {
+        const e = suck * suck;
+        rot = lerp(rot, Math.atan2(this.mouth.y - wy, this.mouth.x - wx), Math.min(1, suck * 2));
+        wx = lerp(wx, this.mouth.x, e);
+        wy = lerp(wy, this.mouth.y, e);
+        wz = lerp(wz, this.mouth.z, e);
+      }
+      if (!cam.project(wx, wy, wz, P)) continue;
+      const fog = clamp(1 - Math.exp(-Math.max(0, wz - cam.cz - cam.dist * 0.6) / Math.max(10, rc.light.vis)));
+      const a = base * (1 - eaten * lerp(0.45, 1, onAxis)) * (1 - fog) * 0.7;
       if (a < 0.01) continue;
-      const rx = st.rx * q.r * spread * P.s;
-      const ry = st.ry * q.r * spread * P.s;
+      const shrink = 1 - 0.8 * suck;
+      const rx = st.rx * q.r * spread * P.s * shrink * (1 + 0.5 * suck);
+      const ry = st.ry * q.r * spread * P.s * shrink;
       const tex = texs[j % texs.length];
-      const rot = st.heading + 0.25 * Math.sin(time * 0.02 + j);
       const c = Math.cos(rot);
       const s = Math.sin(rot);
       const kx = ((2 * rx) / tex.width) * dpr;

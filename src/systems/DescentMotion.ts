@@ -1,7 +1,7 @@
 import { clamp, lerp, noise1, sampleProfile, smoothstep, TAU } from '../core/math';
 import { Track, type Keys } from '../core/Track';
 import { secondsAt, SEGMENTS, WORLD } from '../config/stages';
-import { LOWER, S_REF, WHALE_LEN } from '../entities/WhaleBody';
+import { S_REF, UPPER, WHALE_LEN } from '../entities/WhaleBody';
 
 /**
  * DescentMotion：鲸鱼从停止游动、失去平衡、稳定下沉到落上海床的一整段连续动作。
@@ -11,7 +11,12 @@ import { LOWER, S_REF, WHALE_LEN } from '../entities/WhaleBody';
  *     在“故事时间”（自动播放时的秒数）上积分一次并制成查找表。查表只依赖叙事进度，
  *     因此前进、倒退、暂停和任意跳转都得到同一个位置、姿态与镜头状态；
  *  2. 尾柄、尾叶、胸鳍和头部是独立的被动动画层，由二阶阻尼跟随产生不同程度的惯性与滞后；
- *  3. 1800 米的下沉被艺术化压缩：鲸鱼相对周围水体的“可见下沉”只有约 3.5 m/s，
+ *     胸鳍是被相对水流推动的铰链：法向（上下）的水流把它托向上方，沿体轴的水流把它顺向体轴。
+ *     低头下沉时海水大致沿体轴从头流向尾，胸鳍顺着水流贴向身体、轻轻摆动；接近海床、下沉放缓时水流变弱，
+ *     胸鳍回到画中的姿态；
+ *  3. 停止游动、开始下沉之后，身体一边下沉一边缓缓翻过来（约 35 秒），之后保持肚子朝上，背部先着地，
+ *     肚子朝上躺在海床上；
+ *  4. 1800 米的下沉被艺术化压缩：鲸鱼相对周围水体的“可见下沉”只有约 3.5 m/s，
  *     其余的深度（hidden）由镜头与鲸鱼一起整体带走。海洋雪与途中的生物跟随“水体参照系”，
  *     因此画面里是一头巨大的身体在水中缓慢下沉，而深度计、光照与水色仍按真实深度变化。
  *     海床同样锚定在水体参照系中（锚点是接触海床的那一刻），压缩在接触之前结束，
@@ -65,21 +70,18 @@ const TILT: Keys = [
   [0.49, 0.035], [0.497, 0.02], [DESCENT_END, 0],
 ];
 /**
- * 翻身（弧度，0 背部朝上，π 肚子朝上）：从开始下沉起，失去控制的身体一边下沉一边慢慢翻过来（约 18 秒，
- * 与低头、下沉同时进行，转到一半时腹部朝向镜头）；在深海中保持肚子朝上（参考画面），
- * 接近海床、身体放平时再慢慢翻回来，腹部先触底。
+ * 翻身（弧度，0 背部朝上，π 肚子朝上）：开始下沉的同时，失去控制的身体一边下沉一边慢慢翻过来
+ * （约 35 秒，开始与结束时转得最慢，转到一半时腹部朝向镜头）；之后一直保持肚子朝上（参考画面），
+ * 不再翻回来，背部先触底，肚子朝上躺在海床上。
  */
 const ROLL: Keys = [
-  [DESCENT_START, 0], [0.326, 0], [0.332, 0.1], [0.338, 0.42], [0.344, 0.95], [0.35, 1.55], [0.358, 2.2],
-  [0.366, 2.72], [0.374, 3.04], [0.38, Math.PI], [0.44, Math.PI], [0.448, 2.95], [0.456, 2.2], [0.464, 1.2], [0.471, 0.45], [0.477, 0.1],
-  [0.482, 0], [DESCENT_END, 0],
+  [DESCENT_START, 0], [0.327, 0], [0.333, 0.1], [0.34, 0.34], [0.348, 0.72], [0.357, 1.2], [0.367, 1.75],
+  [0.377, 2.28], [0.387, 2.72], [0.396, 3.0], [0.404, Math.PI], [DESCENT_END, Math.PI],
 ];
-/**
- * 肚子朝上时，画中的胸鳍（翻过来后指向后上方）在重力与水流中垂下来，斜向后下方（弧度，叠加在随水流的摆动之上；
- * 画面翻转之后，画中“贴近身体”的负转动在屏幕上是向下）。
- * 翻身途中胸鳍随身体一起转（画在身体里），所以在翻身开始与结束前后，转动渐渐归零（摆动约 1.5 秒、下垂约 4 秒），交接处没有跳变。
- */
-const FIN_HANG = -2.4;
+/** 胸鳍随相对水流的偏转（弧度）：法向（上下）水流按二次阻力托起胸鳍，沿体轴的水流把它顺向后方 */
+const FIN_LIFT = 0.075;
+const FIN_STREAM = 0.1;
+const FIN_MAX = 0.6;
 /** 贴近海床时被挤压的水垫阻力（线性阻尼） */
 const CUSHION: Keys = [[DESCENT_START, 0], [0.464, 0], [0.478, 0.22], [0.488, 0.7], [0.495, 1.5], [DESCENT_END, 2.2]];
 /** 深度压缩的速度形状（0~1）：离开海面光区之后才开始，接触海床之前结束 */
@@ -110,10 +112,10 @@ const INERTIA = (WHALE_LEN * WHALE_LEN) / 12;
 const SIM_DT = 1 / 120;
 const SAMPLE_HZ = 60;
 
-/** 腹侧轮廓上的接触采样点（局部坐标，+y 向下） */
+/** 着地一侧轮廓上的接触采样点（局部坐标，+y 向下）：肚子朝上落在海床上，着地的是背侧 */
 const CONTACTS = [0.02, 0.06, 0.1, 0.16, 0.22, 0.28, 0.34, 0.4, 0.46, 0.54, 0.62, 0.7, 0.8, 0.9, 0.97].map((s) => ({
   x: WHALE_LEN * (S_REF - s),
-  y: sampleProfile(LOWER, s),
+  y: sampleProfile(UPPER, s),
 }));
 
 /** 二阶阻尼跟随：被动部件的惯性与滞后（ζ < 1 时有一次轻微回摆） */
@@ -285,7 +287,6 @@ export class DescentMotion {
       let finFarT = 0;
       if (passive) {
         const flow = vy - wc;
-        const fwd = Math.max(0, vx - uc);
         const n1 = 0.65 * noise1(t * 0.23, 21) + 0.35 * noise1(t * 0.53, 24);
         const n2 = 0.65 * noise1(t * 0.31, 22) + 0.35 * noise1(t * 0.61, 25);
         const n3 = 0.65 * noise1(t * 0.27, 23) + 0.35 * noise1(t * 0.57, 26);
@@ -293,8 +294,18 @@ export class DescentMotion {
         // 尾叶：下沉时自下而上的水流把它托向尾柄的延长线；比尾柄更软，随尾柄的运动反向滞后
         flukeT = 0.11 * flow - 0.32 * flexL.v + stir * 0.06 * n1;
         nodT = 1.7 * om + 0.012 * flow;
-        finT = 0.088 * flow + 0.105 * fwd - 1.5 * om + stir * 0.1 * n2;
-        finFarT = 0.076 * flow + 0.093 * fwd - 1.2 * om + stir * 0.08 * n3;
+        // 胸鳍：相对水流换到体轴坐标——沿体轴 aw（正值流向吻端）、法向 nw（正值流向局部 +y，背部朝上时是腹侧）。
+        // 下沉时海水自下而上流过（nw < 0），按二次阻力把胸鳍托向上方；向前滑行时沿体轴向后的水流把它顺向体轴。
+        // 画中胸鳍转动的正方向在背部朝上时是向下张开，肚子朝上（画面翻转）时是向上张开，所以“向上”要乘以朝向
+        const cth = Math.cos(th);
+        const sth = Math.sin(th);
+        const aw = (uc - vx) * cth + (wc - vy) * sth;
+        const nw = -(uc - vx) * sth + (wc - vy) * cth;
+        const sig = Math.cos(rollL.x) >= 0 ? 1 : -1;
+        const lift = FIN_LIFT * -nw * Math.abs(nw);
+        const stream = FIN_STREAM * Math.max(0, -aw) * Math.abs(aw);
+        finT = clamp(-sig * lift - stream, -FIN_MAX, FIN_MAX) - 0.8 * om + stir * 0.05 * n2;
+        finFarT = clamp(-sig * lift * 0.85 - stream, -FIN_MAX, FIN_MAX) - 0.7 * om + stir * 0.05 * n3;
         if (i === 0) {
           flexL.reset(flexT);
           flukeL.reset(flukeT);
@@ -322,8 +333,9 @@ export class DescentMotion {
           T.finF[k] = finFarL.x;
           T.arc[k] = arcL.x;
           T.roll[k] = clamp(rollL.x, 0, Math.PI);
-          // 画中的胸鳍：随水流自然舒展并轻轻摆动；闭眼特写之后才开始（那时胸鳍不在画面里），着陆前回到画中的姿态
-          T.fin[k] = (0.06 + 0.45 * finL.x) * smoothstep(DESCENT_START, 0.3, p) * (1 - smoothstep(0.482, 0.496, p));
+          // 画中的胸鳍：随相对水流偏转并轻轻摆动；闭眼特写之后才开始（那时胸鳍不在画面里）。
+          // 接近海床时下沉放缓、水流变弱，胸鳍自然回到画中的姿态，着地时与静卧（以及之后的骨骼）一致
+          T.fin[k] = finL.x * smoothstep(DESCENT_START, 0.3, p) * (1 - smoothstep(0.484, 0.496, p));
           T.vx[k] = vx - uc;
           T.vy[k] = vy - wc;
           T.hidden[k] = hidden;
@@ -406,8 +418,8 @@ export class DescentMotion {
       T.waterX[k] += s;
     }
 
-    // 胸鳍：翻身途中为 0；肚子朝上时垂向后下方；交接处前后渐变
-    const gap = 1.5 * SAMPLE_HZ;
+    // 胸鳍：翻身途中画在身体里（转动为 0），翻身开始之前与结束之后约 2 秒内渐变，交接处没有跳变
+    const gap = 2 * SAMPLE_HZ;
     let last = -Infinity;
     const dist = new Float64Array(n).fill(Infinity);
     for (let k = 0; k < n; k++) {
@@ -419,13 +431,9 @@ export class DescentMotion {
       if (T.roll[k] > 1e-3 && T.roll[k] < Math.PI - 1e-3) last = k;
       dist[k] = Math.min(dist[k], last - k);
     }
-    for (let k = 0; k < n; k++) {
-      // 垂下来是一个更慢的过程（约 4 秒），不会一下子甩过去
-      const hang = T.roll[k] >= Math.PI - 1e-3 ? FIN_HANG * smoothstep(0, 4 * SAMPLE_HZ, dist[k]) : 0;
-      T.fin[k] = smoothstep(0, gap, dist[k]) * T.fin[k] + hang;
-    }
+    for (let k = 0; k < n; k++) T.fin[k] *= smoothstep(0, gap, dist[k]);
 
-    // 静卧：着陆后很短的一段里，位置、俯仰与被动层精确收敛到静卧状态
+    // 静卧：着陆后很短的一段里，位置、俯仰与被动层精确收敛到静卧状态（肚子朝上）
     const ks = kOf(SETTLE_P);
     const ke = kOf(DESCENT_END);
     for (let k = 0; k < n; k++) {
@@ -434,7 +442,8 @@ export class DescentMotion {
       T.x[k] = lerp(T.x[k], this.restX, w);
       T.y[k] = lerp(T.y[k], this.restY, w);
       T.pitch[k] = lerp(T.pitch[k], 0, w);
-      for (const c of ['flex', 'nod', 'fluke', 'finN', 'finF', 'arc', 'roll', 'fin', 'vx', 'vy'] as const) T[c][k] *= 1 - w;
+      T.roll[k] = lerp(T.roll[k], Math.PI, w);
+      for (const c of ['flex', 'nod', 'fluke', 'finN', 'finF', 'arc', 'fin', 'vx', 'vy'] as const) T[c][k] *= 1 - w;
     }
 
     // 镜头跟随点：在水体参照系中对鲸鱼位置做带速度前馈的二阶跟随。

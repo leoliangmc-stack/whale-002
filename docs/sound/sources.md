@@ -3,7 +3,7 @@
 > 音效剪辑师，2026-10-24。第一阶段（第 0–8 节）找到并评估许可清晰的**真实录音**；第二阶段按 `cue-sheet.md` 剪辑、处理并接入代码，**最终采用的素材见下面的“第二阶段”一节**（以它为准）。
 > 第一阶段的素材编号用 `S`（海面 / 空中）、`U`（水下）、`E`（cue sheet 点名的 ESC-50 片段核对）；第二阶段直接用 cue sheet 的 A / F / V 编号。
 
-## 第二阶段：最终采用的素材（`public/assets/audio/`，46 个 MP3，共 2451 KB）
+## 第二阶段：最终采用的素材（`public/assets/audio/`，47 个 MP3，共 2452 KB）
 
 全部由 `python3 -I scripts/sound-build.py` 从下表的固定地址下载、处理并归一化（循环床 −18 LUFS 积分、一次性素材 −18 LUFS-S 最大值、真峰值 ≤ −1 dBTP；实测响度写进 manifest，运行时据此换算增益）。第 2 节有每个来源的许可依据。取舍（声音导演与主导开发者确认）：
 
@@ -28,7 +28,7 @@
 | F02 | 巨体滑过 | ESC-50 Akoustikos 137162（CC BY）降 12 个半音 + Kinoton（CC0） | CC BY / CC0 | 低通 500 Hz，2.5 s 渐强、3 s 渐弱 | 1 |
 | F03 | 吞水 | ikbenraar 200461 A/B、Akoustikos 137162（CC BY）降 7–9 个半音；SanctSound 浪涌；Alvinwhatup2 133977（CC0）降 24 个半音 | CC BY / CC0 / 政府 | 低通 1 kHz，0–2.5 s 加速涌入、2.5–4.2 s 峰值、之后平息 | 1 |
 | F04 | 滤水 | aesqe 39901（CC BY）、runirasmussen 172377 / BranRainey 142349（CC0）降 7 个半音、SanctSound 气泡 | CC BY / CC0 / 政府 | 低通 2 kHz / 1.5 kHz | 1 |
-| F05a/b | 气泡 | SanctSound FK01_06、GR01_01 潜水员呼出的气泡（不含调节器的吸气声） | 美国政府作品 | 低通 3 kHz | 1 |
+| F05a/b | 气泡（成团 / 零星） | SanctSound FK01_06、GR01_01 潜水员呼出的气泡（不含调节器的吸气声）+ ESC-50 倒水的咕嘟：BranRainey 142349、runirasmussen 172377、vibe_crc 51433 | 美国政府作品 / CC0 | 气泡主体 70 Hz–3 kHz；咕嘟降 3–4 个半音、带通 300–2500 Hz；300 Hz 以上 45% / 49%（第三阶段重剪） | 1 |
 | F06 | 镜头出水 | SanctSound 浪涌 + Adam_N 164594、rafael45 241846（CC0）+ aesqe 39901（CC BY） | 政府 / CC0 / CC BY | 0.6 s 处破水 | 2 |
 | F09a–d | 海鸥 ×4（单声、两声、单声、远） | Moodist `animals/seagulls.mp3`（8.4–14.4 s、34.1–34.8 s 的单只长鸣） | 仓库声明 Pixabay / CC0，**未逐文件核实** | 高通 450 Hz；d 低通 2.5 kHz 加距离尾巴 | 2 |
 | F10 | 远处的喷气 | 由 F11 派生 | 同 F11 | 低通 3 kHz、更短、加尾巴 | 2 |
@@ -37,10 +37,10 @@
 | F13 | 浪花扫过镜头 | bulbastre 132157-A（CC BY） | CC BY | 运行时声像从左扫到右 | 2 |
 | F14 | 镜头入水 | Adam_N 164593（CC0）+ SanctSound GR01_01 气泡 | CC0 / 政府 | 0.2–0.35 s 内从全频带变成 900 Hz 低通 | 2 |
 | F15a/b/c | 着地主击 / 头部 / 尾部 | toiletrolltube 174797（CC0）降 12 个半音；crosbychris 213077（CC BY）降 24 个半音；lwdickens 263501（CC0）降 12 个半音 | CC0 / CC BY | 起音 70 ms，200–600 Hz 抬 12 dB（软泥让手机听得见），暗混响 | 3 |
-| F16 | 沉积物 | Kinoton（CC0）+ SanctSound 雨 + 浪涌 | CC0 / 政府 | 低通 1.2 kHz / 1 kHz，2 s 涌起、7 s 沉降 | 3 |
-| F17a/b | 咬合 | SanctSound CI02_04 鱼类敲击 + lwdickens 263490（CC0）放慢一倍 | 政府 / CC0 | 低通 1.5 kHz，短暗混响 | 4 |
-| F18a/b | 甩头（被搅动的水） | SanctSound 浪涌 + runirasmussen 172377（CC0）降 5 个半音 | 政府 / CC0 | 低通 400 Hz / 1 kHz | 4 |
-| F18c/d | 撕下 | lwdickens 263501（CC0）放慢一倍 + SanctSound 浪涌 | CC0 / 政府 | 低通 1.2 kHz，短暗混响 | 4 |
+| F16 | 沉积物 | Kinoton（CC0）+ SanctSound HI03_02 水下雨声 + 浪涌 | CC0 / 政府 | 流动低通 1.2 kHz 作涌起；雨声带通 300–1500 Hz 作翻涌落下的沙沙声；300 Hz 以上 38%（第三阶段重剪） | 3 |
+| F17a/b | 咬合 | SanctSound CI02_04 鱼类敲击 + lwdickens 263490（CC0）放慢一倍 | 政府 / CC0 | 低通 1.5 kHz，300–1500 Hz 抬 8 dB，短暗混响；300 Hz 以上 58% / 50% | 4 |
+| F18a/b | 甩头（被搅动的水） | SanctSound 浪涌 + runirasmussen 172377（CC0）降 5 个半音 + ikbenraar 200461（CC BY）降 7 个半音 | 政府 / CC0 / CC BY | 浪涌低通 400 Hz 保留分量，海蚀洞涌浪带通 300–1500 Hz；300 Hz 以上 32% / 37% | 4 |
+| F18c/d | 撕下 | lwdickens 263501（CC0）放慢一倍 + SanctSound 浪涌 | CC0 / 政府 | 低通 1.5 kHz，300–1500 Hz 抬 8 dB，短暗混响；300 Hz 以上 67% / 30% | 4 |
 | F19 | 盲鳗 | RutgerMuller 51147（CC0）降 7 个半音 | CC0 | 低通 1 kHz | 4 |
 | F21a–d | 骨上的“嗒”×2、刮擦 ×2 | SanctSound CI01_01 单个枪虾“啪”；lwdickens 263491（CC0） | 政府 / CC0 | 低通 3 kHz | 4 |
 | F23 | 抹香鲸咔哒 | SanctSound HI03_02 spermwhale + spermwhale2 | 美国政府作品 | 300 Hz–4 kHz，远距离尾巴 | 3 |

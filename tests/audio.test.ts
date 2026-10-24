@@ -163,6 +163,35 @@ describe('sound director: triggering', () => {
     expect(b.total).toBeGreaterThanOrEqual(0.0445);
     expect(b.db).toBe(-27);
   });
+  it('a waiting whale call keeps waiting while the story is paused, and plays after resume + 0.5 s of silence', () => {
+    const d = new AudioDirector((id) => DUR[id]);
+    const dt = 1 / 30;
+    const rate = 0.0025;
+    let total = 0.034;
+    let t = 0;
+    const ids: Array<{ id: string; t: number }> = [];
+    const step = (paused: boolean, speaking: boolean) => {
+      if (!paused) total += rate * dt;
+      t += dt;
+      const plan = d.step(dt, frame(total, { total, paused, velocity: paused ? 0 : rate, autoRate: rate, vo: { speaking, nextStartIn: Infinity } }), t);
+      for (const c of plan.play) ids.push({ id: c.id, t });
+    };
+    step(false, true);
+    // 旁白在说话时越过 V01（p 0.036）：进入等待
+    while (total < 0.0365) step(false, true);
+    expect(ids.some((x) => x.id === 'V01')).toBe(false);
+    // 暂停 5 秒：旁白停在半句（不在说话），鲸鸣仍然等待
+    for (let i = 0; i < 150; i++) step(true, false);
+    expect(ids.some((x) => x.id === 'V01')).toBe(false);
+    // 继续播放：旁白接着把这句读完（1 秒），然后安静
+    for (let i = 0; i < 30; i++) step(false, true);
+    expect(ids.some((x) => x.id === 'V01')).toBe(false);
+    const quietAt = t;
+    for (let i = 0; i < 30; i++) step(false, false);
+    const v = ids.find((x) => x.id === 'V01');
+    expect(v).toBeDefined();
+    expect(v!.t - quietAt).toBeGreaterThanOrEqual(0.5 - 1e-6);
+  });
 });
 
 describe('sound director: narration ducking envelope', () => {

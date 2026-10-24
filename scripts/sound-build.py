@@ -69,6 +69,7 @@ SOURCES = {
     'esc_gulp': ESC + '3-133977-A-29.wav',  # Alvinwhatup2, CC0
     'esc_pour_a': ESC + '4-172377-A-17.wav',  # runirasmussen, CC0
     'esc_pour_b': ESC + '3-142349-A-17.wav',  # BranRainey, CC0
+    'esc_pour_c': ESC + '1-51433-A-17.wav',  # vibe_crc, CC0
     'esc_splash_1': ESC + '3-164594-A-15.wav',  # Adam_N, CC0
     'esc_splash_2': ESC + '3-164593-A-15.wav',  # Adam_N, CC0
     'esc_splashing': ESC + '5-241846-A-15.wav',  # rafael45, CC0
@@ -257,6 +258,11 @@ def fit(x: np.ndarray, n: int) -> np.ndarray:
         return x[:n]
     pad = np.zeros((n - len(x),) + x.shape[1:])
     return np.concatenate([x, pad])
+
+
+def level(x: np.ndarray, rms_db: float) -> np.ndarray:
+    """把一段素材调到给定的均方根电平（dBFS），各成分先对齐电平再按比例混合"""
+    return x / (np.sqrt(np.mean(x ** 2)) + 1e-12) * 10 ** (rms_db / 20)
 
 
 def presence(x: np.ndarray, lo: float, hi: float, db: float) -> np.ndarray:
@@ -739,19 +745,29 @@ def f04(L):
     return fades(apply(x, env(len(x), [(0, 0), (0.3, 1), (2.8, 0.9), (7.0, 0)])), 0.02, 0.2)
 
 
+def glugs(L: Library, parts: list[tuple[str, float, float, float]], st: float) -> np.ndarray:
+    """倒水时一个个气泡的“咕嘟”（ESC-50 的倒水录音，CC0）：降调、带通 300–2500 Hz，像水下听到的气泡"""
+    segs = [(bpf(varispeed(cut(L.get(k), a, b), st), 300, 2500), at, 0.0) for k, a, b, at in parts]
+    return mix(*segs)
+
+
 @recipe('F05a', 'bubbles-a', 1)
 def f05a(L):
-    # 气泡（成团）：SanctSound FK01_06 潜水员呼出的气泡（不含调节器的吸气声）
-    x = lpf(cut(L.get('ss_bubbles_a'), 0.6, 2.8), 3000)
-    x = np.concatenate([x, np.zeros(sec(0.6))])
-    return fades(apply(x, env(len(x), [(0, 1), (1.6, 1), (2.8, 0)])), 0.01, 0.1)
+    # 气泡（成团）：SanctSound FK01_06 潜水员呼出的一团气泡（不含调节器的吸气声）作低沉的主体，
+    # 叠上降 4 个半音的倒水咕嘟（BranRainey、runirasmussen）作一个个气泡的“咕噜”
+    body = lpf(hpf(cut(L.get('ss_bubbles_a'), 0.6, 2.8), 70), 3000)
+    g = glugs(L, [('esc_pour_b', 0.6, 2.0, 0.05), ('esc_pour_a', 2.1, 3.5, 0.9)], -4)
+    x = fit(mix((body, 0, 0), (g, 0, -1)), sec(2.8))
+    return fades(apply(x, env(len(x), [(0, 1), (1.5, 1), (2.7, 0)]) ** 1.5), 0.01, 0.1)
 
 
 @recipe('F05b', 'bubbles-b', 1)
 def f05b(L):
-    # 零星的小气泡：SanctSound GR01_01 的另一位潜水员，更轻
-    x = lpf(cut(L.get('ss_bubbles_b'), 0.8, 2.6), 3000)
-    return fades(apply(x, env(len(x), [(0, 0.6), (0.4, 1), (1.8, 0)])), 0.01, 0.1)
+    # 零星的小气泡：SanctSound GR01_01 的另一位潜水员（更轻）+ 几个降 3 个半音的咕嘟（vibe_crc、runirasmussen）
+    body = lpf(hpf(cut(L.get('ss_bubbles_b'), 0.8, 2.6), 70), 3000)
+    g = glugs(L, [('esc_pour_c', 1.55, 1.95, 0.15), ('esc_pour_a', 2.85, 3.4, 0.8), ('esc_pour_c', 3.35, 3.7, 1.3)], -3)
+    x = mix((body, 0, -4), (g, 0, 0))
+    return fades(apply(fit(x, sec(1.9)), env(sec(1.9), [(0, 0.7), (0.3, 1), (1.9, 0)])), 0.01, 0.1)
 
 
 @recipe('F06', 'emerge', 2)
@@ -897,21 +913,23 @@ def f15c(L):
 
 @recipe('F16', 'sediment', 3, 'shot', 32000, 48)
 def f16(L):
-    # 沉积物：Kinoton 水下流动低通 1.2 kHz（涌起、扩散）+ SanctSound 水下雨声低通 1 kHz（细颗粒落下）+ 一次低沉的浪涌
+    # 沉积物：Kinoton 水下流动低通 1.2 kHz（低沉的涌起）+ 一次浪涌（分量）
+    # + SanctSound 水下雨声带通 300–1500 Hz（大团细颗粒翻涌、落下的沙沙声，手机也听得见）
     a = lpf(cut(np.concatenate([L.get('kinoton_underwater')] * 2), 2, 16), 1200)
     a = apply(a, env(len(a), [(0, 0), (2, 1), (7, 0.9), (14, 0)]))
-    b = lpf(hpf(cut(L.get('ss_rain'), 60, 72), 200), 1000)
-    b = apply(b, env(len(b), [(0, 0), (4, 1), (9, 0.6), (11, 0)]))
+    b = bpf(cut(L.get('ss_rain'), 60, 74), 300, 1500)
+    b = apply(b, env(len(b), [(0, 0), (1.5, 0.7), (3, 1), (8, 0.7), (14, 0)]))
     c = surge(L, 4.7, 3.0, 300)
-    x = presence(mix((a, 0, 0), (b, 3, 4), (c, 0, -3)), 220, 800, 9)
+    x = mix((level(a, -20), 0, 0), (level(b, -23), 0.2, 0), (level(c, -24), 0, 0))
     return fades(fit(x, sec(14)), 0.05, 0.5)
 
 
 def bite(L: Library, at: float, crunch_at: float) -> np.ndarray:
-    """睡鲨咬合：SanctSound CI02_04 中真实的水下鱼类敲击（低通 1.5 kHz）+ 放慢一倍的湿雪咯吱声（lwdickens），短暗混响"""
+    """睡鲨咬合：SanctSound CI02_04 中真实的水下鱼类敲击（低通 1.5 kHz）作“笃”，
+    放慢一倍的湿雪咯吱声（lwdickens）作“咬进去”，中频（300–1500 Hz）抬高让手机听得见，短暗混响"""
     k = lpf(cut(L.get('ss_knocks'), at - 0.03, at + 0.35), 1500)
     c = lpf(varispeed(cut(L.get('esc_snow_crunchy'), crunch_at - 0.05, crunch_at + 0.3), -12), 1500)
-    x = mix((k, 0, 0), (c, 0.02, -8))
+    x = presence(mix((k, 0, 0), (c, 0.02, -2)), 300, 1500, 8)
     x = reverb_tail(x, 0.6, 1000, -12, seed=11)
     return fades(fit(x, sec(0.8)), 0.003, 0.15)
 
@@ -926,31 +944,33 @@ def f17b(L):
     return bite(L, 3.20, 3.97)
 
 
-def shake(L: Library, a: float, pour_at: float) -> np.ndarray:
-    """甩头：一下被搅动的水（短浪涌低通 400 Hz + 降 5 个半音的倒水）"""
+def shake(L: Library, a: float, pour_at: float, cave_at: float) -> np.ndarray:
+    """甩头：一下被搅动的水——短浪涌低通 400 Hz（分量）+ 降 5 个半音的倒水（runirasmussen）
+    + 降 7 个半音的海蚀洞涌浪带通 300–1500 Hz（ikbenraar，水被搅开的“哗”）"""
     s = surge(L, a, 1.3, 400)
-    w = lpf(varispeed(cut(L.get('esc_pour_a'), pour_at, pour_at + 1.0), -5), 1000)
-    x = presence(mix((s, 0, 0), (w, 0.05, 2)), 220, 700, 9)
+    w = lpf(varispeed(cut(L.get('esc_pour_a'), pour_at, pour_at + 1.0), -5), 1500)
+    c = bpf(varispeed(cut(L.get('esc_seacave_a'), cave_at, cave_at + 0.9), -7), 300, 1500)
+    x = mix((level(s, -20), 0, 0), (level(w, -27), 0.05, 0), (level(c, -25), 0.02, 0))
     x = fit(x, sec(1.3))
     return fades(apply(x, env(len(x), [(0, 0), (0.12, 1), (1.3, 0)])), 0.005, 0.1)
 
 
 @recipe('F18a', 'shake-a', 4)
 def f18a(L):
-    return shake(L, 5.3, 2.1)
+    return shake(L, 5.3, 2.1, 3.0)
 
 
 @recipe('F18b', 'shake-b', 4)
 def f18b(L):
-    return shake(L, 12.0, 0.5)
+    return shake(L, 12.0, 0.5, 0.8)
 
 
 def tear(L: Library, at: float) -> np.ndarray:
-    """撕下：放慢一倍的湿雪脚步（纤维撕裂的闷声，lwdickens）低通 1.2 kHz + 一小团水流，短暗混响"""
-    t = lpf(hpf(varispeed(cut(L.get('esc_wet_snow'), at - 0.1, at + 0.65), -12), 100), 1200)
+    """撕下：放慢一倍的湿雪脚步（纤维撕裂的闷声，lwdickens）低通 1.2 kHz、中频抬高 + 一小团水流，短暗混响"""
+    t = lpf(hpf(varispeed(cut(L.get('esc_wet_snow'), at - 0.1, at + 0.65), -12), 100), 1500)
     s = surge(L, 8.4, 1.2, 400)
     s = apply(s, env(len(s), [(0, 0), (0.3, 1), (1.2, 0)]))
-    x = mix((t, 0, 0), (s, 0.1, -6))
+    x = presence(mix((t, 0, 0), (s, 0.1, -6)), 300, 1500, 8)
     x = reverb_tail(x, 0.6, 1000, -12, seed=13)
     return fades(fit(x, sec(1.6)), 0.005, 0.15)
 

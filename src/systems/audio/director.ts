@@ -130,6 +130,8 @@ export class AudioDirector {
   // 旁白压低
   private duckLevel = 0;
   private voSilentFor = 99;
+  /** 鲸鸣等待用：人声已经安静了多久（暂停期间不计，继续播放后重新计） */
+  private callSilentFor = 99;
   /** 没有 vo 数据时由 setDuck 提供的压低程度 */
   externalDuck = 0;
   // 探索模式
@@ -279,11 +281,12 @@ export class AudioDirector {
   }
 
   private releasePending(plan: MixPlan, f: AudioFrame, total: number, now: number): void {
-    if (!this.pending.length) return;
+    // 故事暂停期间继续等待（倒退与跳转在别处取消）
+    if (!this.pending.length || f.paused) return;
     const keep: Pending[] = [];
     for (const pd of this.pending) {
       const latest = pd.trigger - pd.cue.p + (pd.cue.latest ?? pd.cue.p);
-      if (!f.vo?.speaking && this.voSilentFor >= 0.5) this.start(plan, pd.cue, pd.trigger, now, 0);
+      if (!f.vo?.speaking && this.callSilentFor >= 0.5) this.start(plan, pd.cue, pd.trigger, now, 0);
       else if (total >= latest) this.start(plan, pd.cue, pd.trigger, now, -8);
       else keep.push(pd);
     }
@@ -335,6 +338,9 @@ export class AudioDirector {
     }
     if (vo.speaking) this.voSilentFor = 0;
     else this.voSilentFor += dt;
+    // 暂停时旁白停在半句，鲸鸣不能趁这时放出来：继续播放、人声确实结束 0.5 s 之后才算空档
+    if (vo.speaking || f.paused) this.callSilentFor = 0;
+    else this.callSilentFor += dt;
     let want: number;
     if (vo.speaking || vo.nextStartIn <= 0.15) want = 1;
     else if (this.voSilentFor < 0.4) want = this.duckLevel > 0 ? 1 : 0;

@@ -4,7 +4,7 @@
 
 - 支持 PC、iPad、手机浏览器（Chrome / Safari / Edge，iOS / iPadOS Safari）
 - 蓝鲸与鲸骨是 whale-kit 中的水彩画（约 0.8 MB WebP），沿脊线切成条带实时弯曲、张嘴、下沉与分解；其余画面为程序实时生成，保留了正式资源的替换接口
-- 全程有声音，全部来自真实录音（见「声音」）：蓝鲸的歌声与远处的鲸群合唱是 MBARI 的水听器录音（加速 6 倍后可听），水下环境、气泡、枪虾与抹香鲸来自 NOAA / 美国海军 SanctSound 水听器，海浪、溅水、呼吸等来自 ESC-50 中单独标为 CC0 / CC BY 的实地录音；按声音导演的剪辑表（`docs/sound/cue-sheet.md`）随画面与旁白混音，46 个 MP3 共约 2.4 MB，按段落分批加载
+- 全程有声音，全部来自真实录音（见「声音」）：蓝鲸的歌声与远处的鲸群合唱是 MBARI 的水听器录音（加速 6 倍后可听），水下环境、气泡、枪虾与抹香鲸来自 NOAA / 美国海军 SanctSound 水听器，海浪、溅水、呼吸等来自 ESC-50 中单独标为 CC0 / CC BY 的实地录音；按声音导演的剪辑表（`docs/sound/cue-sheet.md`）随画面与旁白混音，47 个 MP3 共约 2.4 MB，按段落分批加载
 - 旁白（可开关，默认打开）：一位知性女声朗读每一条字幕，由开源的本地语音合成模型 Kokoro-82M v1.1-zh（Apache-2.0）生成，22 段共约 0.9 MB（见「旁白」）；说话时环境声与音效自动压低
 - 生产包约 285 KB JS（gzip 后约 106 KB），另加 `assets/whale/` 中的绘画、`assets/audio/` 中的录音与 `assets/narration/` 中的旁白
 
@@ -259,7 +259,7 @@ scripts/                     截图、交互测试、性能测试脚本
 - **视角**：镜头在水下只听见水下的声音，在空中只听见空气中的声音，水线中景两者兼有；出水、入水与画面的水线对齐。深度越深，水下的声音越闷。
 - **旁白**：说话时环境声 −7 dB（空气中的海浪 −9 dB）、普通音效 −5 dB、主角音效 −2 dB；鲸鸣排在旁白的空档里，等人声结束 0.5 秒后再唱。
 - **确定性**：连续层的电平是叙事进度与相机深度的纯函数（正放、倒放、跳转得到同一状态），一次性音效只在正向经过时触发，快速滚动时只留主角音效，循环接缝不丢、不重复 cue。
-- **体积**：46 个 MP3 共约 2.4 MB，按段落分 5 批加载（开场、海面、深海、海床），离开段落后释放解码数据。
+- **体积**：47 个 MP3 共约 2.4 MB，按段落分 5 批加载（开场、海面、深海、海床），离开段落后释放解码数据。
 
 `python3 -I scripts/sound-build.py` 从固定的地址下载原始录音并重新生成全部文件与 manifest。
 
@@ -283,11 +283,11 @@ scripts/                     截图、交互测试、性能测试脚本
 | A05、F06、F04 | 水线拍打、出水后淌下的水、滤水 | slag777（167063，CC BY）、aesqe（39901，CC BY） |
 | F11 / F10 / F12 | **喷气、远处喷气、吸气（处理过的替代录音，不是鲸鱼的录音）**：海蚀洞的涌浪作主体，降调的人的呼吸作“噗”与胸腔，高通的海浪作水雾 | ikbenraar（200461，CC BY）、Walter_Odington（18631，CC0）、cidchili（54961，CC0）、UncleSigmund（30709，CC0）、monotraum（208810，CC0）、toiletrolltube（174797，CC0） |
 | F01、F02、F03 | 拍尾、巨体滑过、吞水（降调的海蚀洞涌浪与“屋里的海”，加 SanctSound 的浪涌；吞水里有降 24 个半音的吞咽声） | ikbenraar（200461，CC BY）、Akoustikos（137162，CC BY）、Alvinwhatup2（133977，CC0） |
-| F04 | 滤水中的咕嘟 | runirasmussen（172377，CC0）、BranRainey（142349，CC0） |
+| F04、F05 | 滤水中的咕嘟、气泡中一个个的“咕噜”（降调的倒水） | runirasmussen（172377，CC0）、BranRainey（142349，CC0）、vibe_crc（51433，CC0） |
 | F06、F14 | 出水与入水的水花 | Adam_N（164593、164594，CC0）、rafael45（241846，CC0） |
 | F13 | 浪花扫过镜头 | bulbastre（132157，CC BY） |
 | F15、F16 | 着地（降调的石头落水、浪击海堤、湿雪脚步）与沉积物 | toiletrolltube（174797，CC0）、crosbychris（213077，CC BY）、lwdickens（263501，CC0） |
-| F17、F18、F19、F21 | 撕咬、甩头、撕下、盲鳗、骨上的刮擦 | lwdickens（263490、263491、263501，CC0）、runirasmussen（172377，CC0）、RutgerMuller（51147，CC0） |
+| F17、F18、F19、F21 | 撕咬、甩头、撕下、盲鳗、骨上的刮擦 | lwdickens（263490、263491、263501，CC0）、runirasmussen（172377，CC0）、ikbenraar（200461，CC BY）、RutgerMuller（51147，CC0） |
 
 **海鸥**（F09）：开源应用 [Moodist](https://github.com/remvze/moodist)（MIT）中的鸥群录音 `public/sounds/animals/seagulls.mp3`，其 README 声明第三方声音为 Pixabay Content License 或 CC0，**没有逐个文件的来源，未能核实**；商用前请核实，或换成外网的 CC0 / CC BY 单只海鸥录音（替换方法：把新文件按同名放进 `scripts/sound-build.py` 的来源表并重跑）。
 

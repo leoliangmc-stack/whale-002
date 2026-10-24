@@ -110,7 +110,8 @@ export class AudioManager {
     }
     const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!AC) return;
-    // iPhone 侧面的静音开关打开时仍然出声（与视频播放一致）
+    // iPhone 侧面的静音开关打开时仍然出声（与视频播放一致）：Safari 16.4+ 的 navigator.audioSession，
+    // 不支持时什么都不做
     const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
     if (session) {
       try {

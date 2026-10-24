@@ -878,3 +878,11 @@ button {
     transition-duration: 0.01s;
   }
 }
+
+/* 设置面板底部的声音与旁白来源说明 */
+#settings .credit {
+  margin-top: 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  opacity: 0.6;
+}

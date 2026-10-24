@@ -1,7 +1,63 @@
-# 鲸落：深海之境 · 声音素材来源与评估（第一阶段）
+# 鲸落：深海之境 · 声音素材来源与评估
 
-> 音效剪辑师，2026-10-24。范围：找到并整理许可清晰的**真实录音**，供重做声音使用。本阶段没有改项目代码。
-> 素材编号用 `S`（海面 / 空中）、`U`（水下）、`E`（cue sheet 点名的 ESC-50 片段核对）。「对应 cue」一栏对照 `cue-sheet.md` 第 3.2 节的 A / F / V 编号。
+> 音效剪辑师，2026-10-24。第一阶段（第 0–8 节）找到并评估许可清晰的**真实录音**；第二阶段按 `cue-sheet.md` 剪辑、处理并接入代码，**最终采用的素材见下面的“第二阶段”一节**（以它为准）。
+> 第一阶段的素材编号用 `S`（海面 / 空中）、`U`（水下）、`E`（cue sheet 点名的 ESC-50 片段核对）；第二阶段直接用 cue sheet 的 A / F / V 编号。
+
+## 第二阶段：最终采用的素材（`public/assets/audio/`，46 个 MP3，共 2451 KB）
+
+全部由 `python3 -I scripts/sound-build.py` 从下表的固定地址下载、处理并归一化（循环床 −18 LUFS 积分、一次性素材 −18 LUFS-S 最大值、真峰值 ≤ −1 dBTP；实测响度写进 manifest，运行时据此换算增益）。第 2 节有每个来源的许可依据。取舍（声音导演与主导开发者确认）：
+
+- **不用 CC BY-SA / NC**：0 A.D. 的素材（CC BY-SA 3.0）一个都没用；A06 高空风（可选）省略（A04 自带微风）。
+- **不用“海豹弹”的脉冲**（U08a、U08b、U08c 都不用）：着地 F15 改用降调的石头落水 + 浪击海堤 + 湿雪脚步。
+- **喷气与吸气是处理过的替代录音**（F10、F11、F12）：没有找到许可合适的真实鲸鱼喷气，按 cue sheet 的 C 方案用海蚀洞涌浪 + 降调的人的呼吸模拟，README 中如实写明。
+- **海鸥只有 Moodist 一个来源**：许可写作“仓库声明 Pixabay Content License / CC0，未逐个文件核实”，README 提示所有者商用前核实或替换。
+- **蓝鲸**：主线仍是 MBARI 的录音（6 倍速），重新从原始数据处理，叠加升高一个八度的同一段录音；NOAA 的 8 倍速 B 叫声与座头鲸都没有用。
+
+| 编号 | 内容 | 来源与原作者 | 许可 | 处理 | 批次 |
+|---|---|---|---|---|---|
+| A01 | 开阔水下（30 s 循环） | SanctSound OC03_02 soundscape 16–50 s | 美国政府作品 | 去瞬态、30 Hz–6 kHz、3 s 交叉淡化成循环 | 0 |
+| A02 | 从水下听到的头顶海浪（15 s） | SanctSound MB02_04 wind（36 dB 增益版） | 美国政府作品 | 低通 1.5 kHz，250–900 Hz 抬 9 dB（手机能听见） | 0 |
+| A03 | 深海（30 s） | MBARI 16 kHz，2016-12-21 00:25:40 UTC 起 40 s | CC BY 4.0 | 低通 1.6 kHz | 3 |
+| A04 | 高空的大洋海面（22 s，立体声） | ESC-50：monotraum 208810 A/B（CC0）、vhlam 133863（CC0）、Ryding 125966（CC0）、digifishmusic 43760（CC BY） | CC0 / CC BY | 6 段交叉拼接，左右声道不同顺序，120 Hz–9 kHz | 2 |
+| A05 | 水线拍打（14 s，立体声） | ESC-50：slag777 167063 A/B/C、aesqe 39901 A/B | CC BY | 交叉拼接，左右错开 | 2 |
+| A07 | 远处的鲸群合唱（30 s） | MBARI 2 kHz，2018-10-20 06:20 UTC 起 7 分钟中最平稳的 33 s | CC BY 4.0 | 6 倍速 + 八度层（−6 dB），低通 1.8 kHz | 0 |
+| A08 | 身体旁流过的水流（20 s） | Kinoton “Underwater Ambience”（freesound 393819，经 Ambie） | CC0 | 低通 800 Hz，250–800 Hz 抬 9 dB | 0 |
+| A09 | 磷虾群的窸窣（12 s） | SanctSound HI03_02 rain 20–36 s | 美国政府作品 | 600 Hz–6 kHz | 0 |
+| A10 | 食腐活动（12 s） | SanctSound CI01_05 snappingshrimp | 美国政府作品 | 扩展器稀疏化（约三成）、降 5 个半音、低通 3 kHz | 4 |
+| F01a–c | 尾叶推水 ×3 | SanctSound MB02_04 中的三次浪涌 + ESC-50 ikbenraar 200461（CC BY）降 12 个半音 | 美国政府作品 / CC BY | 带通 120–450 Hz，起音 0.25 s，衰减到 3 s | 0 |
+| F02 | 巨体滑过 | ESC-50 Akoustikos 137162（CC BY）降 12 个半音 + Kinoton（CC0） | CC BY / CC0 | 低通 500 Hz，2.5 s 渐强、3 s 渐弱 | 1 |
+| F03 | 吞水 | ikbenraar 200461 A/B、Akoustikos 137162（CC BY）降 7–9 个半音；SanctSound 浪涌；Alvinwhatup2 133977（CC0）降 24 个半音 | CC BY / CC0 / 政府 | 低通 1 kHz，0–2.5 s 加速涌入、2.5–4.2 s 峰值、之后平息 | 1 |
+| F04 | 滤水 | aesqe 39901（CC BY）、runirasmussen 172377 / BranRainey 142349（CC0）降 7 个半音、SanctSound 气泡 | CC BY / CC0 / 政府 | 低通 2 kHz / 1.5 kHz | 1 |
+| F05a/b | 气泡 | SanctSound FK01_06、GR01_01 潜水员呼出的气泡（不含调节器的吸气声） | 美国政府作品 | 低通 3 kHz | 1 |
+| F06 | 镜头出水 | SanctSound 浪涌 + Adam_N 164594、rafael45 241846（CC0）+ aesqe 39901（CC BY） | 政府 / CC0 / CC BY | 0.6 s 处破水 | 2 |
+| F09a–d | 海鸥 ×4（单声、两声、单声、远） | Moodist `animals/seagulls.mp3`（8.4–14.4 s、34.1–34.8 s 的单只长鸣） | 仓库声明 Pixabay / CC0，**未逐文件核实** | 高通 450 Hz；d 低通 2.5 kHz 加距离尾巴 | 2 |
+| F10 | 远处的喷气 | 由 F11 派生 | 同 F11 | 低通 3 kHz、更短、加尾巴 | 2 |
+| F11 | **喷气（处理过的替代录音）** | ikbenraar 200461 A/B（CC BY）作主体；Walter_Odington 18631（CC0）降 7 个半音作“噗”；cidchili 54961（CC0）降 12 个半音作胸腔；monotraum 208810 A/B（CC0）高通作水雾 | CC BY / CC0 | 80 ms 爆发、0.6 s 核心、约 2 s 水雾；立体声的只有水雾（单声道兼容） | 2 |
+| F12 | **吸气（处理过的替代录音）** | UncleSigmund 30709-C（CC0）降 10 个半音；ikbenraar 200461-B（CC BY）；toiletrolltube 174797（CC0）降 12 个半音作喷气孔合上 | CC0 / CC BY | 低通 1.5 kHz | 2 |
+| F13 | 浪花扫过镜头 | bulbastre 132157-A（CC BY） | CC BY | 运行时声像从左扫到右 | 2 |
+| F14 | 镜头入水 | Adam_N 164593（CC0）+ SanctSound GR01_01 气泡 | CC0 / 政府 | 0.2–0.35 s 内从全频带变成 900 Hz 低通 | 2 |
+| F15a/b/c | 着地主击 / 头部 / 尾部 | toiletrolltube 174797（CC0）降 12 个半音；crosbychris 213077（CC BY）降 24 个半音；lwdickens 263501（CC0）降 12 个半音 | CC0 / CC BY | 起音 70 ms，200–600 Hz 抬 12 dB（软泥让手机听得见），暗混响 | 3 |
+| F16 | 沉积物 | Kinoton（CC0）+ SanctSound 雨 + 浪涌 | CC0 / 政府 | 低通 1.2 kHz / 1 kHz，2 s 涌起、7 s 沉降 | 3 |
+| F17a/b | 咬合 | SanctSound CI02_04 鱼类敲击 + lwdickens 263490（CC0）放慢一倍 | 政府 / CC0 | 低通 1.5 kHz，短暗混响 | 4 |
+| F18a/b | 甩头（被搅动的水） | SanctSound 浪涌 + runirasmussen 172377（CC0）降 5 个半音 | 政府 / CC0 | 低通 400 Hz / 1 kHz | 4 |
+| F18c/d | 撕下 | lwdickens 263501（CC0）放慢一倍 + SanctSound 浪涌 | CC0 / 政府 | 低通 1.2 kHz，短暗混响 | 4 |
+| F19 | 盲鳗 | RutgerMuller 51147（CC0）降 7 个半音 | CC0 | 低通 1 kHz | 4 |
+| F21a–d | 骨上的“嗒”×2、刮擦 ×2 | SanctSound CI01_01 单个枪虾“啪”；lwdickens 263491（CC0） | 政府 / CC0 | 低通 3 kHz | 4 |
+| F23 | 抹香鲸咔哒 | SanctSound HI03_02 spermwhale + spermwhale2 | 美国政府作品 | 300 Hz–4 kHz，远距离尾巴 | 3 |
+| V01 | 蓝鲸 A-B 叫声（近） | MBARI 2 kHz，2018-11-10 04:13:56 起 40 s | CC BY 4.0 | 6 倍速 + 八度层（−1.5 dB），低通 2.5 kHz；300 Hz 以上 42% | 1 |
+| V02 | A-B 叫声（深海、极远） | 同上 04:15:28 起 66 s | CC BY 4.0 | 八度层（−0.5 dB），低通 800 Hz，+0.9 s / −9 dB、+2.1 s / −15 dB 回声；45% | 3 |
+| V03 | B 叫声（远方的同伴） | 同上 04:17:36 起 36 s | CC BY 4.0 | 八度层（−2 dB），低通 1.2 kHz，3 s 柔和尾巴；52% | 3 |
+| V04 | B 叫声（新鲸鱼，中远） | 与 V03 同一段 | CC BY 4.0 | 低通 1.5 kHz，2 s 尾巴；35% | 4 |
+
+**八度层的电平**：cue sheet 要求“比原声低 8 dB”且“300 Hz 以上能量 ≥ 35%”，两者在这些录音上不能同时满足（−8 dB 时只有约 15–20%）。按验收条件取：八度层比原声低 0.5–2 dB（按均方根），见上表。手机外放能听见这条旋律线的上方泛音，耳机里仍以低沉的原声为主。
+
+**批次**（manifest 的 `batch`，按需加载、离开段落后释放）：0 常驻（A01、A02、A07、A08、A09、F01），1 开场（p < 0.125 与 ≥ 0.94），2 海面（0.06–0.226），3 深海（0.226–0.93），4 海床（0.35–0.945）；自由探索加载 3、4。按 48 kHz 解码估算，同时常驻的 PCM 约 45–48 MB。
+
+**需要所有者在外网补的素材**（本环境打不开 freesound、nps.gov、xeno-canto 等）：真实的鲸鱼喷气与吸气（换掉 F10–F12）、许可逐个可查的单只海鸥长鸣（换掉 F09）、南极蓝鲸的 Z 叫声。换的时候把文件加进 `sound-build.py` 的来源表、改对应的配方并重跑即可，代码不用改。
+
+---
+
+## 第一阶段：候选素材的评估
 
 ## 0. 结论速览
 

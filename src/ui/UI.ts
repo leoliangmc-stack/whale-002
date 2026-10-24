@@ -343,6 +343,8 @@ export class UI {
       this.showToast('探索记录', '已清除。');
     });
     row('探索记录', '清除已发现的隐藏生物', reset);
+    const credit = h('div', { class: 'desc credit' }, '声音是真实的水听器与野外录音（MBARI、NOAA 等，CC BY / 公共领域 / CC0），旁白由开源语音模型生成；来源与许可见项目 README。');
+    this.settings.appendChild(credit);
   }
 
   updateSettings(s: UISettings): void {

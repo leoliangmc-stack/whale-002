@@ -32,7 +32,7 @@ export const SHARK_BITES: ReadonlyArray<Wound> = [
 ];
 
 /** 盲鳗自己钻开的小洞 */
-const HAG_HOLES: ReadonlyArray<Wound> = [
+export const HAG_HOLES: ReadonlyArray<Wound> = [
   { p: 0.561, s: 0.43, v: 0.62, r: 0.42, kind: 'hag', hag: 3 },
   { p: 0.566, s: 0.56, v: 0.2, r: 0.36, kind: 'hag', hag: 2 },
   { p: 0.571, s: 0.37, v: 0.3, r: 0.4, kind: 'hag', hag: 3 },

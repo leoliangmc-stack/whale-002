@@ -25,7 +25,7 @@ export interface ExploreRecord {
 const KEY_PREFS = 'whalefall.prefs.v1';
 const KEY_RECORD = 'whalefall.record.v1';
 
-const DEFAULT_PREFS: Prefs = { muted: false, volume: 0.7, reducedMotion: null, quality: 'auto', captions: true, narration: true };
+const DEFAULT_PREFS: Prefs = { muted: false, volume: 0.8, reducedMotion: null, quality: 'auto', captions: true, narration: true };
 const DEFAULT_RECORD: ExploreRecord = { unlocked: false, discovered: [], observed: [] };
 
 function read<T>(key: string, fallback: T): T {

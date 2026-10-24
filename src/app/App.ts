@@ -5,7 +5,7 @@ import { CameraController } from '../controllers/CameraController';
 import { InputController, type InputMode } from '../controllers/InputController';
 import { ResponsiveLayoutManager } from '../controllers/ResponsiveLayoutManager';
 import { StoryProgressController } from '../controllers/StoryProgressController';
-import { clamp, smoothstep, window4 } from '../core/math';
+import { clamp, window4 } from '../core/math';
 import { storage, type Prefs, type QualityPref } from '../core/storage';
 import type { RenderCtx } from '../core/types';
 import { loadWhaleArt, whaleArt } from '../entities/WhaleArt';
@@ -16,6 +16,7 @@ import { AssetRegistry } from '../systems/AssetRegistry';
 import { AudioManager } from '../systems/AudioManager';
 import { DiscoveryManager } from '../systems/DiscoveryManager';
 import { Narration } from '../systems/Narration';
+import { WHALE_SWITCH } from '../systems/StoryTimeline';
 import type { EcoSpeed } from '../systems/EcologyManager';
 import { ParallaxManager, profile } from '../systems/ParallaxManager';
 import { PerformanceMonitor } from '../systems/PerformanceMonitor';
@@ -59,6 +60,8 @@ export class App {
   private following = false;
   private storyReturnP = 0;
   private audioLoading = false;
+  /** 本帧是跳转（溶解过渡）：声音不触发 cue，0.9 s 交叉渐变到新状态 */
+  private audioJump = false;
   private narrationAttached = false;
   private readonly params = new URLSearchParams(location.search);
   private systemReduced = matchMedia('(prefers-reduced-motion: reduce)');
@@ -415,6 +418,7 @@ export class App {
       this.dissolveT = 1;
     }
     change();
+    this.audioJump = true;
     this.narrative.requestWarmup();
     this.input.cancelInertia();
   }
@@ -484,22 +488,28 @@ export class App {
       this.dissolveT = Math.max(0, this.dissolveT - dt / 0.9);
     }
 
-    const near = this.mode === 'story' ? clamp(1 - Math.abs(depth) / 30) : 0;
+    // 声音（docs/sound/cue-sheet.md 1.9）：拍尾在 0.262–0.33 由下沉动作的最后几次摆尾驱动，其余时间是游动的相位
     const sf = this.mode === 'story' ? this.narrative.frame : null;
-    const mover = p < 0.5 ? this.world.whale1 : this.world.whale2;
+    const w1 = this.world.whale1;
+    const mover = p < WHALE_SWITCH ? w1 : this.world.whale2;
+    const beat = p >= 0.262 && p < 0.33;
     this.audio.update(dt, {
       mode: this.mode,
       p,
-      depth,
-      surface: Math.max(near, this.world.render.surface ? this.world.render.surface.aerial : 0),
+      total: this.progress.shown,
       paused,
       velocity: this.progress.velocity,
+      autoRate: StoryProgressController.rateAt(p),
+      jumped: this.audioJump,
+      camDepth: depth,
+      stroke: beat ? { phase: w1.state.beatPh, amp: w1.state.beat } : { phase: mover.phase, amp: mover.state.swim * mover.state.visible },
       sink: sf && p > 0.3 && p < 0.5 ? Math.max(0, sf.water.flowY) : 0,
-      // 近景里的拍尾：镜头越近越响
-      stroke: { phase: mover.phase, amp: mover.state.swim * mover.state.visible, near: 1 - smoothstep(22, 70, this.camera.cam.shot.frameH) },
-      scav: sf ? sf.eco.scav : 0,
-      amph: sf ? sf.eco.amph : 0,
+      eco: this.mode === 'explore' ? this.world.ecology.eco : sf ? sf.eco : null,
+      feast: sf && p > 0.55 && p < 0.72 ? this.world.feast.sound() : null,
+      vo: this.narration.state,
+      zoomFrameH: this.mode === 'explore' ? this.camera.exploreFrameH : undefined,
     });
+    this.audioJump = false;
 
     this.narration.update(dt, { story: this.mode === 'story', p, paused, velocity: this.progress.velocity });
     this.audio.setDuck(this.narration.level);

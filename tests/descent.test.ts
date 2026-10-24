@@ -6,6 +6,7 @@ import { LightingManager } from '../src/systems/LightingManager';
 import { Camera } from '../src/core/Camera';
 import { DORSAL, LOWER, UPPER, WHALE_LEN, WhaleBody } from '../src/entities/WhaleBody';
 import { sampleProfile } from '../src/core/math';
+import { finNeutral, finNormal } from '../src/entities/FinGeometry';
 
 const tl = new StoryTimeline();
 const d = tl.descent;
@@ -149,11 +150,8 @@ describe('descent C/D: steady, heavy sinking', () => {
       expect(Math.abs(w.nod)).toBeLessThan(0.18);
       // 下沉时自下而上的水流把尾叶托向尾柄的延长线
       expect(Math.abs(w.fluke)).toBeLessThan(0.4);
-      // 胸鳍随相对水流偏转，幅度有限
-      for (const f of [w.finN, w.finF]) {
-        expect(f).toBeGreaterThan(-0.7);
-        expect(f).toBeLessThan(0.7);
-      }
+      // 胸鳍随相对水流偏转：始终指向身体后半边（不会朝前翻过去）
+      for (const a of [w.fnA, w.ffA]) expect(a).toBeGreaterThan(0.25);
       if (samples[i].p > 0.37) {
         const dp = w.pitch - ext;
         if (dir >= 0 && dp < -0.003) {
@@ -172,7 +170,7 @@ describe('descent C/D: steady, heavy sinking', () => {
   });
 
   it('fins and tail keep a little passive motion in the deep (not a rigid stone)', () => {
-    const range = (k: 'finN' | 'flex', a: number, b: number) => {
+    const range = (k: 'fnH' | 'flex', a: number, b: number) => {
       let lo = Infinity;
       let hi = -Infinity;
       for (let p = a; p < b; p += 2e-4) {
@@ -182,7 +180,7 @@ describe('descent C/D: steady, heavy sinking', () => {
       }
       return hi - lo;
     };
-    expect(range('finN', 0.4, 0.44)).toBeGreaterThan(0.03);
+    expect(range('fnH', 0.4, 0.44)).toBeGreaterThan(0.03);
     expect(range('flex', 0.4, 0.44)).toBeGreaterThan(0.017);
   });
 });
@@ -199,7 +197,7 @@ describe('descent: landing and hand-offs', () => {
     expect(end.x).toBeCloseTo(WORLD.restX, 4);
     expect(end.y).toBeCloseTo(Y_REST, 4);
     expect(end.pitch).toBeCloseTo(0, 4);
-    for (const k of ['flex', 'nod', 'fluke', 'finN', 'finF', 'beat'] as const) expect(Math.abs(end[k]), k).toBeLessThan(1e-4);
+    for (const k of ['flex', 'nod', 'fluke', 'fin', 'beat'] as const) expect(Math.abs(end[k]), k).toBeLessThan(1e-4);
   });
 
   it('position, pitch and velocity are continuous where the motion table takes over', () => {
@@ -347,35 +345,56 @@ describe('descent: a graceful, quiet drift into the deep', () => {
     }
   });
 
-  it('the pectoral fins trail in the water flowing past the body, and are back in the painted pose before touchdown', () => {
-    const range = (p0: number, p1: number) => {
+  it('the pectoral fins are passive paddles hinged at the shoulder: they trail in the relative flow and are lifted off the body when belly-up', () => {
+    const n = { a: 0, h: 0, z: 0 };
+    const f0 = { a: 0, h: 0, z: 0 };
+    // 偏离体轴的角度（弧度，正值偏向局部上方）
+    const elev = (w: ReturnType<typeof whale>, side: number) => (side > 0 ? Math.atan2(w.fnH, w.fnA) : Math.atan2(w.ffH, w.ffA));
+    const range = (p0: number, p1: number, side: number) => {
       let lo = Infinity;
       let hi = -Infinity;
       for (let p = p0; p <= p1; p += 2e-4) {
-        const f = whale(p).fin;
-        lo = Math.min(lo, f);
-        hi = Math.max(hi, f);
+        const e = elev(whale(p), side);
+        lo = Math.min(lo, e);
+        hi = Math.max(hi, e);
       }
       return { lo, hi };
     };
-    // 翻身之前：向前滑行，沿体轴向后的水流把胸鳍顺向后方（向身体靠拢）
-    const before = range(0.3, 0.315);
-    expect(before.lo).toBeGreaterThan(-0.3);
+    // 闭眼特写之后、翻身之前：向前滑行，胸鳍顺着水流向后、靠近体侧（比画中的姿态更贴近体轴）
+    const before = range(0.305, 0.318, 1);
+    expect(before.lo).toBeGreaterThan(-0.56);
     expect(before.hi).toBeLessThan(0.05);
-    expect(before.lo).toBeLessThan(-0.02);
-    // 肚子朝上、低头下沉：海水大致沿体轴从头流向尾，胸鳍被顺向体轴（不会垂下来），仍随水流轻轻摆动
-    const up = range(0.41, 0.44);
-    expect(up.lo).toBeGreaterThan(-0.65);
-    expect(up.hi).toBeLessThan(-0.1);
-    expect(up.hi - up.lo).toBeGreaterThan(0.02);
-    // 翻身途中胸鳍画在身体里（转动为 0），交接处没有跳变
-    for (let p = 0.3; p < CONTACT_P; p += 2e-4) {
-      const a = whale(p);
-      if (a.roll > 1e-3 && a.roll < Math.PI - 1e-3) expect(a.fin, `p=${p.toFixed(4)}`).toBe(0);
-      expect(Math.abs(whale(p + 2e-4).fin - a.fin), `p=${p.toFixed(4)}`).toBeLessThan(0.05);
+    // 肚子朝上低头下沉：海水从吻端流向尾部、同时自下而上流过，朝上的胸鳍被托离身体，斜向后上方，并不停地轻轻摆动
+    for (const side of [1, -1]) {
+      const up = range(0.41, 0.44, side);
+      expect(up.lo, `side ${side}`).toBeGreaterThan(0.2);
+      expect(up.hi, `side ${side}`).toBeLessThan(0.95);
+      expect(up.hi - up.lo, `side ${side}`).toBeGreaterThan(0.04);
     }
-    expect(Math.abs(whale(DESCENT_START + 1e-4).fin)).toBeLessThan(0.01);
-    expect(whale(CONTACT_P).fin).toBe(0);
+    for (let p = DESCENT_START + 1e-4; p < DESCENT_END - 2e-4; p += 2e-4) {
+      const a = whale(p);
+      const b = whale(p + 2e-4);
+      // 画中的平面内转动不再使用
+      expect(a.fin).toBe(0);
+      for (const side of [1, -1]) {
+        const [A, H, Z] = side > 0 ? [a.fnA, a.fnH, a.fnZ] : [a.ffA, a.ffH, a.ffZ];
+        const [A2, H2, Z2] = side > 0 ? [b.fnA, b.fnH, b.fnZ] : [b.ffA, b.ffH, b.ffZ];
+        expect(Math.hypot(A, H, Z), `p=${p.toFixed(4)}`).toBeCloseTo(1, 3);
+        // 不会穿进身体（与体表外法线的夹角小于 90°）
+        finNormal(side, a.roll, n);
+        expect(A * n.a + H * n.h + Z * n.z, `p=${p.toFixed(4)} side ${side}`).toBeGreaterThan(0.02);
+        // 连续：相邻两个采样（约 0.1 秒）之间方向变化很小——最快的是开始下沉、水流转为自下而上时胸鳍被托起的那几秒
+        expect(Math.hypot(A2 - A, H2 - H, Z2 - Z), `p=${p.toFixed(4)}`).toBeLessThan(0.08);
+      }
+    }
+    // 开始与结束：画中的姿态（开始时背部朝上，结束时肚子朝上），与下沉之外的绘制无缝交接
+    for (const [p, rho] of [[DESCENT_START + 1e-5, 0], [DESCENT_END - 1e-5, Math.PI]] as const) {
+      const w = whale(p);
+      finNeutral(rho, f0);
+      for (const [A, H, Z] of [[w.fnA, w.fnH, w.fnZ], [w.ffA, w.ffH, w.ffZ]]) {
+        expect(Math.hypot(A - f0.a, H - f0.h, Z - f0.z), `p=${p}`).toBeLessThan(0.01);
+      }
+    }
   });
 
   it('rolls belly-up slowly while it sinks, stays belly-up, and lands on its back', () => {

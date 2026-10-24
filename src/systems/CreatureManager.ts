@@ -180,6 +180,11 @@ export class CreatureManager {
       const onBone = i < Math.ceil(squats * 0.6);
       list.push(new SquatLobster(seed++, 0, onBone ? X - 10.3 + r() * 17.1 : X - 15.4 + r() * 29.1, onBone ? -0.4 : -2.1 - r() * 1.7, onBone));
     }
+    // 鲸骨特写（叙事阶段 7）里一定能看到的几只：尾椎、肋骨、头骨与下颌骨上啃食细菌席的螺和蹲守的铠甲虾
+    for (const [x0, x1] of [[43.6, 44.4], [44.8, 45.6], [50.4, 51.2], [56.8, 57.5], [57.9, 58.6]] as const) {
+      list.push(new Snail(seed++, 0.02, x0, x1, -0.3, true));
+    }
+    for (const x of [45.2, 50.9, 51.8, 57.2, 58.4]) list.push(new SquatLobster(seed++, 0.02, x, -0.36, true));
     const pigs = n(4);
     for (let i = 0; i < pigs; i++) {
       const side = i % 2 ? 1 : -1;

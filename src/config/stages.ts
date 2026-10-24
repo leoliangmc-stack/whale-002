@@ -74,8 +74,8 @@ export const SEGMENTS: Segment[] = [
   { from: 0.345, to: 0.46, seconds: 46 }, // C → D：翻成肚子朝上，保持这个姿态稳定下沉，镜头拉远进入深海
   { from: 0.46, to: 0.51, seconds: 16, key: true }, // 接近并接触海床（肚子朝上，背部着地）
   { from: 0.51, to: 0.55, seconds: 8 },
-  { from: 0.55, to: 0.7, seconds: 32, key: true }, // 身体变化
-  { from: 0.7, to: 0.8, seconds: 26, key: true }, // 鲸骨生态
+  { from: 0.55, to: 0.7, seconds: 40, key: true }, // 身体变化：食腐动物撕咬与钻食的近景
+  { from: 0.7, to: 0.8, seconds: 44, key: true }, // 鲸骨生态：几处骨骼的特写
   { from: 0.8, to: 0.87, seconds: 16, key: true }, // 磷虾重新聚集
   { from: 0.87, to: 0.93, seconds: 12 },
   { from: 0.93, to: 0.96, seconds: 9, key: true }, // 新鲸鱼出现
@@ -125,7 +125,11 @@ export function stageAt(p: number): StageDef {
   return STAGES[STAGES.length - 1];
 }
 
-/** 叙事字幕：简短、克制，不依赖声音即可理解。 */
+/**
+ * 叙事字幕：简短、克制，不依赖声音即可理解。旁白（systems/Narration.ts）在字幕出现时开始朗读，
+ * 所以几处起点与声音对齐：喷气最响的部分过去之后才说“温暖的呼气……”，着地的闷响之后才说“经过漫长的下沉……”，
+ * 第三次撕咬结束之后才说“富含养分的沉积物里……”；第一句的显示时间按朗读的长度放宽。
+ */
 export interface Caption {
   from: number;
   to: number;
@@ -134,21 +138,21 @@ export interface Caption {
 }
 
 export const CAPTIONS: Caption[] = [
-  { from: 0.006, to: 0.026, text: '南方的夏季海洋，一头蓝鲸缓缓游来。', sub: '它身长约 24 米，相当于两辆公交车首尾相连。' },
+  { from: 0.006, to: 0.0285, text: '南方的夏季海洋，一头蓝鲸缓缓游来。', sub: '它身长约 24 米，相当于两辆公交车首尾相连。' },
   { from: 0.063, to: 0.0745, text: '前方，出现了点点橙红色的身影。', sub: '磷虾越聚越多。' },
   { from: 0.079, to: 0.112, text: '蓝鲸把嘴张到将近 90°，喉腹褶像手风琴一样撑开。', sub: '它用鲸须把海水滤出，把磷虾留下——这叫滤食。' },
   { from: 0.126, to: 0.152, text: '鲸鱼是哺乳动物，需要回到海面呼吸。' },
   { from: 0.163, to: 0.19, text: '它浮出水面，水波一圈圈向远处扩散。' },
-  { from: 0.203, to: 0.219, text: '“噗——”温暖的呼气冲出喷气孔，化成一道近十米高的水雾柱。' },
+  { from: 0.2045, to: 0.2195, text: '“噗——”温暖的呼气冲出喷气孔，化成一道近十米高的水雾柱。' },
   { from: 0.226, to: 0.244, text: '这头蓝鲸已经在海洋中游过了漫长的一生。' },
   { from: 0.25, to: 0.296, text: '它的眼睛，慢慢地闭上了。', sub: '海水依旧温柔地流动。' },
   { from: 0.331, to: 0.358, text: '它开始缓缓下沉，离开阳光。' },
   { from: 0.355, to: 0.39, text: '越往深处，光线越少，红色最先消失。', sub: '海水从明亮的蓝，变成深沉的蓝。' },
   { from: 0.4, to: 0.44, text: '一千米以下，阳光再也到达不了。', sub: '只有生物自己发出的点点微光。' },
-  { from: 0.493, to: 0.545, text: '经过漫长的下沉，它轻轻落在了海床上。', sub: '一座“鲸落”就此形成。' },
+  { from: 0.5005, to: 0.548, text: '经过漫长的下沉，它轻轻落在了海床上。', sub: '一座“鲸落”就此形成。' },
   { from: 0.556, to: 0.6, text: '气味在海水中扩散，深海的清道夫们陆续赶来。', sub: '盲鳗、睡鲨、长尾鳕和成群的端足类。' },
   { from: 0.605, to: 0.65, text: '一头鲸鱼，能为它们提供好几年的食物。' },
-  { from: 0.655, to: 0.698, text: '富含养分的沉积物里，多毛类和小型甲壳类迅速繁衍。' },
+  { from: 0.669, to: 0.7, text: '富含养分的沉积物里，多毛类和小型甲壳类迅速繁衍。' },
   { from: 0.705, to: 0.745, text: '鲸骨里的油脂，滋养着细菌和食骨蠕虫。' },
   { from: 0.75, to: 0.798, text: '鲸骨成为深海里的一座生命岛屿，', sub: '可以延续几十年。' },
   { from: 0.806, to: 0.84, text: '远处，出现了点点橙红色的身影。' },
@@ -156,6 +160,13 @@ export const CAPTIONS: Caption[] = [
   { from: 0.9, to: 0.935, text: '磷虾群向着阳光的方向聚集……' },
   { from: 0.94, to: 0.975, text: '深蓝之中，一个巨大的身影正在靠近。' },
   { from: 0.978, to: 0.999, text: '一个生命的结束，成为无数生命的新起点。' },
+];
+
+/** 鲸骨的特写镜头（阶段 7，见 StoryTimeline 的 CAM_ROWS）：声音系统据此放骨面上的细碎声响 */
+export const BONE_CLOSEUPS: ReadonlyArray<{ from: number; to: number; subject: 'vertebrae' | 'ribs' | 'skull' }> = [
+  { from: 0.716, to: 0.739, subject: 'vertebrae' },
+  { from: 0.746, to: 0.762, subject: 'ribs' },
+  { from: 0.769, to: 0.783, subject: 'skull' },
 ];
 
 /** 鲸落时间流逝提示（身体分解阶段）。 */

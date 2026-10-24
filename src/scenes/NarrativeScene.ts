@@ -134,6 +134,7 @@ export class NarrativeScene {
       this.warm = 0;
     }
     world.creatures.update(cu);
+    world.feast.update(p, rc.time, w1);
 
     const r = world.render;
     r.surface = f.surface.aerial > 0.001 ? f.surface : null;

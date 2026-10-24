@@ -2,6 +2,7 @@ import { Whale } from '../entities/Whale';
 import { KrillSwarm } from '../entities/KrillSwarm';
 import { CreatureManager } from '../systems/CreatureManager';
 import { EcologyManager } from '../systems/EcologyManager';
+import { Feast } from '../systems/Feast';
 import { LightingManager } from '../systems/LightingManager';
 import { OceanSurface } from '../systems/OceanSurface';
 import { ParticleManager } from '../systems/ParticleManager';
@@ -24,6 +25,8 @@ export class World {
   readonly particles = new ParticleManager();
   readonly creatures = new CreatureManager();
   readonly ecology = new EcologyManager();
+  /** 鲸落上正在进食的食腐动物（阶段 6） */
+  readonly feast = new Feast();
 
   /** 本帧的渲染参数（由当前场景设置） */
   readonly render = {

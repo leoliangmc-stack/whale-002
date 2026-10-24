@@ -57,6 +57,9 @@ export class ParallaxManager {
         w.draw(rc);
       }
       lap('whales');
+      // 正在鲸落上进食的食腐动物：伤口里的盲鳗与端足类、撕咬的睡鲨
+      world.feast.draw(rc);
+      lap('feast');
       creatures.drawLayer(rc, -0.86, 13.7);
       lap('creaturesMid');
 

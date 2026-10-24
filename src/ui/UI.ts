@@ -46,6 +46,7 @@ export interface UIHandlers {
   closeInfo(): void;
   resetRecord(): void;
   activity(): void;
+  toggleNarration(): void;
 }
 
 export interface UISettings {
@@ -54,6 +55,7 @@ export interface UISettings {
   reduced: boolean;
   quality: QualityPref;
   captions: boolean;
+  narration: boolean;
 }
 
 type Attrs = Record<string, string | number | boolean | undefined>;
@@ -90,6 +92,7 @@ export class UI {
   private bar!: HTMLElement;
   private playBtn!: HTMLButtonElement;
   private muteBtn!: HTMLButtonElement;
+  private voiceBtn!: HTMLButtonElement;
   private volInput!: HTMLInputElement;
   private exploreBtn!: HTMLButtonElement;
   private fill!: HTMLElement;
@@ -125,6 +128,7 @@ export class UI {
     this.buildStory();
     this.buildExplore();
     this.buildPanels();
+    this.updateSettings(settingsState);
     if (new URLSearchParams(location.search).has('debug')) {
       this.debug = h('div', { id: 'debug' });
       root.appendChild(this.debug);
@@ -160,6 +164,11 @@ export class UI {
     });
     snd.classList.add('intro-sound');
     opts.appendChild(snd);
+    const nv = btn(this.settingsState.narration ? ICON.voice : ICON.voiceOff, this.settingsState.narration ? '旁白：开' : '旁白：关');
+    nv.setAttribute('aria-pressed', String(this.settingsState.narration));
+    nv.classList.add('intro-voice');
+    nv.addEventListener('click', () => this.hd.toggleNarration());
+    opts.appendChild(nv);
     const rm = btn(ICON.motion, '减少动态效果');
     rm.setAttribute('aria-pressed', String(this.settingsState.reduced));
     rm.classList.add('intro-motion');
@@ -213,6 +222,8 @@ export class UI {
     this.volInput.addEventListener('input', () => this.hd.setVolume(Number(this.volInput.value)));
     vol.appendChild(this.muteBtn);
     vol.appendChild(this.volInput);
+    this.voiceBtn = btn(ICON.voice, '旁白', { labelCls: 'm-hide' });
+    this.voiceBtn.addEventListener('click', () => this.hd.toggleNarration());
     const gear = btn(ICON.gear, '设置', { labelCls: 'm-hide' });
     gear.addEventListener('click', () => this.openPanel(this.settings));
     this.exploreBtn = btn(ICON.lock, '自由探索');
@@ -221,7 +232,7 @@ export class UI {
         this.showToast('自由探索', '完成一次完整的鲸落旅程后解锁。也可以随时点击进度条跳到任意章节。');
       } else this.hd.enterExplore();
     });
-    row2.append(this.playBtn, restart, vol, h('div', { class: 'spacer' }), gear, this.exploreBtn);
+    row2.append(this.playBtn, restart, vol, this.voiceBtn, h('div', { class: 'spacer' }), gear, this.exploreBtn);
     this.bar.append(row1, row2);
     this.bar.addEventListener('pointermove', () => this.hd.activity());
     this.root.append(this.chapter, this.captions, this.timeLabel, this.depth, this.hint, this.bar);
@@ -314,6 +325,9 @@ export class UI {
     const cap = h('div', { class: 'chips' });
     cap.append(chip('开', s.captions, () => this.hd.setCaptions(true)), chip('关', !s.captions, () => this.hd.setCaptions(false)));
     row('字幕', '', cap);
+    const nar = h('div', { class: 'chips' });
+    nar.append(chip('开', s.narration, () => !s.narration && this.hd.toggleNarration()), chip('关', !s.narration, () => s.narration && this.hd.toggleNarration()));
+    row('旁白', '一位女声朗读字幕；说话时环境声会自动压低', nar);
     const q = h('div', { class: 'chips' });
     const qs: Array<[QualityPref, string]> = [
       ['auto', '自动'],
@@ -329,6 +343,8 @@ export class UI {
       this.showToast('探索记录', '已清除。');
     });
     row('探索记录', '清除已发现的隐藏生物', reset);
+    const credit = h('div', { class: 'desc credit' }, '声音是真实的水听器与野外录音（MBARI、NOAA 等，CC BY / 公共领域 / CC0），旁白由开源语音模型生成；来源与许可见项目 README。');
+    this.settings.appendChild(credit);
   }
 
   updateSettings(s: UISettings): void {
@@ -338,6 +354,14 @@ export class UI {
     this.muteBtn.innerHTML = `${s.muted ? ICON.mute : ICON.sound}<span class="lbl m-hide">${s.muted ? '已静音' : '声音'}</span>`;
     this.muteBtn.setAttribute('aria-label', s.muted ? '取消静音' : '静音');
     this.volInput.value = String(s.volume);
+    this.voiceBtn.innerHTML = `${s.narration ? ICON.voice : ICON.voiceOff}<span class="lbl m-hide">${s.narration ? '旁白' : '旁白已关'}</span>`;
+    this.voiceBtn.setAttribute('aria-label', s.narration ? '关闭旁白' : '打开旁白');
+    this.voiceBtn.setAttribute('aria-pressed', String(s.narration));
+    const nv = this.intro.querySelector('.intro-voice');
+    if (nv) {
+      nv.innerHTML = `${s.narration ? ICON.voice : ICON.voiceOff}<span class="lbl">${s.narration ? '旁白：开' : '旁白：关'}</span>`;
+      nv.setAttribute('aria-pressed', String(s.narration));
+    }
     const snd = this.intro.querySelector('.intro-sound');
     if (snd) {
       snd.innerHTML = `${s.muted ? ICON.mute : ICON.sound}<span class="lbl">${s.muted ? '声音：关' : '声音：开'}</span>`;

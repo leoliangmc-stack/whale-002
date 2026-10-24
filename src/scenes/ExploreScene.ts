@@ -57,6 +57,7 @@ export class ExploreScene {
     world.particles.wake.amt = 0;
     world.seabed.mats = w1.state.mats;
     world.seabed.focusX = w1.state.x;
+    world.feast.update(-1, rc.time, w1);
     world.creatures.update({ mode: 'explore', p: 0.78, eco: world.ecology.eco, camY: camera.cam.cy, dt: edt, time: rc.time, reduced: rc.reducedMotion });
     const r = world.render;
     r.surface = null;

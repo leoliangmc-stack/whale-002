@@ -3,6 +3,8 @@ import { clamp, hash1, lerp, noise1, rng, sampleProfile, smoothstep, TAU } from 
 import { textures } from '../core/textures';
 import type { RenderCtx } from '../core/types';
 import { WORLD } from '../config/stages';
+import { woundSize, WOUNDS } from '../config/feast';
+import { FIN_PAINT_DIR, FIN_ROOT_S, finRootPhi } from './FinGeometry';
 import { ART_EYE_OFF, ART_H, ART_W, AXIS_ANGLE, AXIS_PX, axisPx, EYE_ART, FIN_PIVOT, FIN_RECT, mipLevel, sAtPx, whaleArt, type Mipped, type WhaleArtSet } from './WhaleArt';
 import { DORSAL, LOWER, LUNGE_LO, mouthY, rolledHeight, S_BLOW, S_EYE, S_FIN, strokeWarp, UPPER, WHALE_LEN, WhaleBody, type WhaleShape } from './WhaleBody';
 import { WhaleSkeleton } from './WhaleSkeleton';
@@ -43,9 +45,16 @@ export interface WhaleState {
   nod: number;
   /** 尾叶被动偏转（弧度） */
   fluke: number;
-  /** 近侧 / 远侧胸鳍随水流的被动摆动（弧度，正值向后上方抬起）。下沉动作层的输出，不直接驱动画中的胸鳍（见 fin） */
-  finN: number;
-  finF: number;
+  /**
+   * 下沉途中两侧胸鳍的三维方向（单位向量，见 entities/FinGeometry.ts：a 沿体轴指向尾部，h 指向局部上方，z 指向镜头）。
+   * fn 是游动时的近侧胸鳍，ff 是远侧；全为 0 时（下沉之外）胸鳍按画中的姿态绘制（见 fin）。
+   */
+  fnA: number;
+  fnH: number;
+  fnZ: number;
+  ffA: number;
+  ffH: number;
+  ffZ: number;
   /** 身体的弓形程度 0~1（见 WhaleBody.archAngle）：下沉时头尾从胸腹部垂下的弧线 */
   arc: number;
   /** 绕体轴的翻身角（弧度，见 WhaleBody.rolledHeight）：下沉时肚子朝上（π），着陆前翻回来 */
@@ -54,6 +63,8 @@ export interface WhaleState {
   fin: number;
   /** 鲸鱼下方海床的世界 y（下沉途中海床属于水体参照系，会有偏移；用于尾叶的海床约束与接触阴影） */
   seabed: number;
+  /** 鲸鱼谱系进度（食腐动物留下的伤口按它出现，见 config/feast.ts）；负值表示没有伤口 */
+  feast: number;
 }
 
 /**
@@ -81,6 +92,9 @@ const FLUKE_UP = { x: 170, y: 255 };
 
 /** 胸鳍图层随身体摆放时参照的脊线位置（鳍的中部） */
 const FIN_S = sAtPx(FIN_RECT[0] + FIN_RECT[2] / 2);
+
+/** 每个分解空洞由几块柔和的圆斑拼成（形状不规则，边缘参差） */
+const HOLE_DOTS = 5;
 
 /** 沿体轴切成的条带数：每条约 0.3 米，弯曲时看不出折线 */
 const SLICES = 84;
@@ -113,13 +127,52 @@ export function makeWhaleState(): WhaleState {
     flex: 0,
     nod: 0,
     fluke: 0,
-    finN: 0,
-    finF: 0,
+    fnA: 0,
+    fnH: 0,
+    fnZ: 0,
+    ffA: 0,
+    ffH: 0,
+    ffZ: 0,
     arc: 0,
     roll: 0,
     fin: 0,
     seabed: WORLD.seabedY,
+    feast: -1,
   };
+}
+
+let flesh: { rim: HTMLCanvasElement; core: HTMLCanvasElement } | null = null;
+
+/** 伤口的两张精灵：外圈的鲸脂与淤青、里面暗红的肌肉（颜色之后随身体一起按深度着色） */
+function fleshSprites(): { rim: HTMLCanvasElement; core: HTMLCanvasElement } {
+  if (flesh) return flesh;
+  const make = (stops: Array<[number, string]>) => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 96;
+    const g = c.getContext('2d')!;
+    const gr = g.createRadialGradient(48, 48, 0, 48, 48, 48);
+    for (const [o, col] of stops) gr.addColorStop(o, col);
+    g.fillStyle = gr;
+    g.fillRect(0, 0, 96, 96);
+    return c;
+  };
+  flesh = {
+    rim: make([
+      [0, '#d6c6aa'],
+      [0.74, '#cbb89b'],
+      [0.84, 'rgba(84,70,68,0.4)'],
+      [1, 'rgba(70,60,60,0)'],
+    ]),
+    core: make([
+      [0, '#260b0e'],
+      [0.38, '#3f1518'],
+      [0.66, '#672827'],
+      [0.84, '#8a4740'],
+      [0.93, 'rgba(150,92,80,0.55)'],
+      [1, 'rgba(150,92,80,0)'],
+    ]),
+  };
+  return flesh;
 }
 
 /** 分解时软组织褪去的颜色 */
@@ -210,6 +263,8 @@ export class Whale {
   private readonly shape: WhaleShape = { swim: 0, phase: 0, beat: 0, beatPh: 0, mouth: 0, throat: 0, rest: 0, flex: 0, nod: 0, fluke: 0, arc: 0, roll: 0, shrink: 0 };
   private readonly sh: Shade = makeShade();
   private readonly holes: Hole[] = [];
+  /** 伤口轮廓（复用，避免每帧分配） */
+  private readonly gashPts = new Float32Array(56);
   private readonly tmp: RGB = [0, 0, 0];
   private layer: HTMLCanvasElement | null = null;
   private layerCtx: CanvasRenderingContext2D | null = null;
@@ -235,6 +290,8 @@ export class Whale {
   private rostrumTurn = 0;
   /** 局部绘制变换在屏幕上的包围盒（像素，用于离屏图层裁剪） */
   private bbox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  /** 只在这个屏幕范围内绘制图层（骨骼只从空洞里露出来时） */
+  private limit: { x0: number; y0: number; x1: number; y1: number } | null = null;
   readonly finPose: FinPose = { ...PAINTED_FIN };
   readonly finFarPose: FinPose = { ...PAINTED_FIN };
   /** 与海床的接触（每帧由 updateContact 计算，局部坐标） */
@@ -273,6 +330,32 @@ export class Whale {
     // 从吻端排到尾叶，便于在缺刻之后沿着尾叶逐段累积位置
     this.slices.sort((a, b) => a.s - b.s);
     this.skeleton = new WhaleSkeleton(seed);
+  }
+
+  /**
+   * 身体 (s, v) 处还剩多少软组织（0~1）：被分解的空洞挖掉的地方为 0（与 cutHoles 同一组空洞），
+   * 软组织整体褪去时一起减少。食腐动物只在还有肉的地方进食。
+   */
+  fleshAt(s: number, v: number): number {
+    const st = this.state;
+    if (st.tissue >= 0.999) return 1;
+    const b = this.body;
+    const q = b.point(s, v, { x: 0, y: 0 });
+    let left = smoothstep(0, 0.3, st.tissue);
+    for (const h of this.holes) {
+      const k = smoothstep(h.th, h.th - 0.5, st.tissue);
+      if (k <= 0.001) continue;
+      const r = h.r * Math.pow(k, 1.25) * (1 + (1 - st.tissue) * 0.35);
+      b.point(h.s, h.v, this.p);
+      for (let j = 0; j < HOLE_DOTS; j++) {
+        const a = hash1(h.seed * 7 + j) * TAU;
+        const d = r * 0.62 * hash1(h.seed * 13 + j);
+        const rr = r * (0.5 + 0.45 * hash1(h.seed * 3 + j));
+        const dist = Math.hypot(q.x - this.p.x - Math.cos(a) * d, q.y - this.p.y - Math.sin(a) * d);
+        left = Math.min(left, smoothstep(rr * 0.55, rr * 1.05, dist));
+      }
+    }
+    return left;
   }
 
   /** 局部坐标 → 世界坐标 */
@@ -526,6 +609,38 @@ export class Whale {
     this.bbox.y0 = Math.max(0, Math.floor((P.y - r) * rc.dpr));
     this.bbox.x1 = Math.min(rc.ctx.canvas.width, Math.ceil((P.x + r) * rc.dpr));
     this.bbox.y1 = Math.min(rc.ctx.canvas.height, Math.ceil((P.y + r) * rc.dpr));
+    const l = this.limit;
+    if (l) {
+      this.bbox.x0 = Math.max(this.bbox.x0, l.x0);
+      this.bbox.y0 = Math.max(this.bbox.y0, l.y0);
+      this.bbox.x1 = Math.min(this.bbox.x1, l.x1);
+      this.bbox.y1 = Math.min(this.bbox.y1, l.y1);
+    }
+  }
+
+  /** 已经打开的分解空洞在屏幕上的包围盒（设备像素，含柔和边缘的余量）；没有空洞时为空盒 */
+  private holeBox(rc: RenderCtx): { x0: number; y0: number; x1: number; y1: number } {
+    const st = this.state;
+    const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+    const P = this.P4;
+    for (const h of this.holes) {
+      const k = smoothstep(h.th, h.th - 0.5, st.tissue);
+      if (k <= 0.001) continue;
+      const r = h.r * Math.pow(k, 1.25) * (1 + (1 - st.tissue) * 0.35) * 1.4 + 0.3;
+      this.body.point(h.s, h.v, this.p);
+      this.toWorld(this.p.x, this.p.y, this.q);
+      if (!rc.cam.project(this.q.x, this.q.y, st.z, P)) continue;
+      const rr = r * P.s;
+      box.x0 = Math.min(box.x0, (P.x - rr) * rc.dpr);
+      box.y0 = Math.min(box.y0, (P.y - rr) * rc.dpr);
+      box.x1 = Math.max(box.x1, (P.x + rr) * rc.dpr);
+      box.y1 = Math.max(box.y1, (P.y + rr) * rc.dpr);
+    }
+    box.x0 = Math.floor(box.x0);
+    box.y0 = Math.floor(box.y0);
+    box.x1 = Math.ceil(box.x1);
+    box.y1 = Math.ceil(box.y1);
+    return box;
   }
 
   /** 屏幕上是否可见（粗略包围盒）。 */
@@ -552,9 +667,13 @@ export class Whale {
     if (decaying) {
       // 骨骼在身体之后；压进沉积物的部分同样被压痕边缘挡住
       const vis = this.skeleton.visibility(st);
-      if (vis > 0.001) {
+      // 软组织还很完整时，骨骼只会从已经打开的空洞里露出来：骨骼图层只画空洞所在的范围（近景时省掉一整层全屏绘制）
+      const limit = st.tissue > 0.62 ? this.holeBox(rc) : null;
+      if (vis > 0.001 && (!limit || limit.x1 > limit.x0)) {
         const sk = this.skeleton;
+        this.limit = limit;
         this.renderLayer(rc, 1, vis, 0, BONE_AVG, (ctx) => sk.drawSlices(ctx, art.skeleton), (ctx, _fake, _scale, w, h) => sk.stain(ctx, st, w, h));
+        this.limit = null;
         const ctx = rc.ctx;
         ctx.save();
         const scale = this.applyLocal(ctx, rc);
@@ -597,7 +716,12 @@ export class Whale {
     if (m < 0.999) {
       // 胸鳍单独转动时：先画去掉胸鳍的身体，再把胸鳍绕根部转过去叠上
       const fin = this.finTurn();
-      if (fin !== 0) {
+      if (this.fins3D()) {
+        // 下沉：两侧胸鳍按三维方向单独绘制。鳍根转到身体背面一侧的先画（被身体挡住，只露出伸出轮廓的部分）
+        this.drawFins3D(lctx, art, false);
+        this.drawSlices(lctx, art.swimBody, false);
+        this.drawFins3D(lctx, art, true);
+      } else if (fin !== 0) {
         this.drawSlices(lctx, art.swimBody, false);
         this.drawFin(lctx, art, fin);
       } else this.drawSlices(lctx, art.swim, false);
@@ -621,8 +745,120 @@ export class Whale {
         actx.clearRect(0, 0, sw + 2, shh + 2);
       }
     }
+    const st = this.state;
+    if (st.feast > 0.55 && st.tissue > 0.002) this.drawWounds(lctx);
     this.drawEye(lctx, scale, k);
   }
+
+  /**
+   * 食腐动物咬开的伤口，以及分解时空洞的边缘：先画一圈白色的鲸脂与周围的淤青，再画里面暗红的肌肉。
+   * 画在身体画上（source-atop），之后与身体一起按深度着色；空洞本身在 finish 中挖掉，留下生肉的边缘。
+   */
+  private drawWounds(ctx: CanvasRenderingContext2D): void {
+    const st = this.state;
+    const u = st.feast;
+    const b = this.body;
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < WOUNDS.length; i++) {
+      const w = WOUNDS[i];
+      const k = woundSize(w, u);
+      if (k <= 0) continue;
+      const f = b.frame(w.s, 0, this.f);
+      b.point(w.s, w.v, this.p);
+      this.drawGash(ctx, this.p.x, this.p.y, f.a, w.r * k, 0.62, i + 1, w.kind === 'shark');
+    }
+    // 分解的空洞：挖掉之前先铺上生肉与鲸脂，挖掉之后留下一圈撕开的边缘
+    if (st.tissue < 0.999) {
+      const spr = fleshSprites();
+      for (let pass = 0; pass < 2; pass++) {
+        for (const h of this.holes) {
+          const k = smoothstep(h.th, h.th - 0.5, st.tissue);
+          if (k <= 0.001) continue;
+          const r = h.r * Math.pow(k, 1.25) * (1 + (1 - st.tissue) * 0.35);
+          b.point(h.s, h.v, this.p);
+          for (let j = 0; j < HOLE_DOTS; j++) {
+            const a = hash1(h.seed * 7 + j) * TAU;
+            const d = r * 0.62 * hash1(h.seed * 13 + j);
+            const rr = r * (0.5 + 0.45 * hash1(h.seed * 3 + j)) * (pass === 0 ? 1.32 : 1.13);
+            ctx.drawImage(pass === 0 ? spr.rim : spr.core, this.p.x + Math.cos(a) * d - rr, this.p.y + Math.sin(a) * d - rr, rr * 2, rr * 2);
+          }
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 一处撕开的伤口（局部坐标）：不规则、边缘参差的轮廓沿体轴拉长；外面一圈淤青与白色的鲸脂层，
+   * 里面是暗红的肌肉，越深越暗，带几道肌肉纤维与裂缝。睡鲨的一口在一侧留下一排齿痕的扇贝形边缘。
+   */
+  private drawGash(ctx: CanvasRenderingContext2D, cx: number, cy: number, a: number, R: number, flat: number, seed: number, bite: boolean): void {
+    const N = 28;
+    const ca = Math.cos(a);
+    const sa = Math.sin(a);
+    const pts = this.gashPts;
+    for (let j = 0; j < N; j++) {
+      const t = (j / N) * TAU;
+      let r = 1 + 0.13 * (noise1(Math.cos(t) * 1.3 + seed * 5.3, seed) + noise1(Math.sin(t) * 1.3 + seed, seed + 1) - 1) + 0.07 * (hash1(seed * 97 + j) - 0.5);
+      // 齿痕：上缘（指向上方的一侧）一排小的扇贝形缺口
+      if (bite && Math.sin(t) > 0.15) r += 0.13 * Math.abs(Math.sin(t * 7 + seed)) * Math.sin(t);
+      const lx = Math.cos(t) * r * R;
+      const ly = -Math.sin(t) * r * R * flat;
+      pts[2 * j] = lx;
+      pts[2 * j + 1] = ly;
+    }
+    const path = (k: number) => {
+      ctx.beginPath();
+      for (let j = 0; j < N; j++) {
+        const lx = pts[2 * j] * k;
+        const ly = pts[2 * j + 1] * k;
+        const x = cx + lx * ca - ly * sa;
+        const y = cy + lx * sa + ly * ca;
+        if (j === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+    };
+    // 淤青与鲸脂
+    ctx.fillStyle = 'rgba(62,52,58,0.22)';
+    path(1.45);
+    ctx.fill();
+    path(1.27);
+    ctx.fill();
+    ctx.fillStyle = '#cfbd9f';
+    path(1.12);
+    ctx.fill();
+    // 肌肉：中心最深
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.05);
+    g.addColorStop(0, '#220a0d');
+    g.addColorStop(0.45, '#45171a');
+    g.addColorStop(0.8, '#6f2c2a');
+    g.addColorStop(1, '#93504a');
+    ctx.fillStyle = g;
+    path(1);
+    ctx.fill();
+    // 肌肉纤维与裂缝
+    ctx.lineCap = 'round';
+    for (let j = 0; j < 5; j++) {
+      const h1 = hash1(seed * 13 + j);
+      const h2 = hash1(seed * 29 + j);
+      const t0 = (h1 - 0.5) * 1.3 * R;
+      const q0 = (h2 - 0.5) * 0.8 * R * flat;
+      const len = (0.3 + 0.3 * hash1(seed * 41 + j)) * R;
+      const x0 = cx + t0 * ca - q0 * sa;
+      const y0 = cy + t0 * sa + q0 * ca;
+      const d = a + (hash1(seed * 53 + j) - 0.5) * 0.9;
+      ctx.strokeStyle = j % 2 ? 'rgba(160,92,84,0.55)' : 'rgba(20,6,8,0.6)';
+      ctx.lineWidth = R * (j % 2 ? 0.05 : 0.07);
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x0 + Math.cos(d) * len, y0 + Math.sin(d) * len);
+      ctx.stroke();
+    }
+  }
+
 
   /**
    * 在离屏图层中画出一张画（身体或骨骼），再整体合成到画面上：
@@ -874,7 +1110,20 @@ export class Whale {
         ctx.restore();
         clipped = false;
       }
-      if (rolling) {
+      if (rolling && sl.s > 1) {
+        // 尾叶是一块水平的薄板：侧面看去是画中的样子，翻到一半时正对镜头，看到的是整个展开的尾叶（两片叶左右对称）。
+        // 用画中的尾叶与它上下翻过来的样子交叉叠加近似，正对镜头时两者都在、并按翼展拉开
+        const cr = Math.cos(rho);
+        const spread = 1 + 0.6 * Math.sin(rho);
+        const w1 = smoothstep(-0.75, -0.15, cr);
+        const w2 = smoothstep(-0.75, -0.15, -cr);
+        for (const [w, ky] of [[w1, spread], [w2, -spread]] as const) {
+          if (w <= 0.002) continue;
+          ctx.globalAlpha = base * al * w;
+          this.sliceTransform(ctx, B, sl, A, ky, mpp, ct, stt);
+          ctx.drawImage(img, Math.max(0, x0 - ext) * r, 0, (x1 - Math.max(0, x0 - ext)) * r, ART_H * r, Math.max(0, x0 - ext), 0, x1 - Math.max(0, x0 - ext), ART_H);
+        }
+      } else if (rolling) {
         this.drawRolledSlice(ctx, B, sl, A, img, r, Math.max(0, x0 - ext), x1, ku, kl, mpp, ct, stt, rho);
       } else if (ext <= 0 && Math.abs(ku - 1) < 1e-3 && Math.abs(kl - 1) < 1e-3) {
         this.sliceTransform(ctx, B, sl, A, sgn, mpp, ct, stt);
@@ -964,6 +1213,70 @@ export class Whale {
       const yb = Math.ceil(A.y + Math.max(wa, wb)) + 1;
       ctx.drawImage(img, x0 * r, ya * r, (x1 - x0) * r, (yb - ya) * r, x0, ya, x1 - x0, yb - ya);
     }
+  }
+
+  /** 下沉途中：胸鳍按三维方向单独绘制（见 FinGeometry） */
+  private fins3D(): boolean {
+    const st = this.state;
+    return st.fnA * st.fnA + st.fnH * st.fnH > 0.04 && this.gape < 0.001 && st.tissue >= 0.999;
+  }
+
+  /**
+   * 两侧胸鳍中鳍根朝向镜头（front）或背向镜头的那些：鳍根随翻身转到横截面上的新位置，
+   * 胸鳍图层的鳍根放在那里，按三维方向在侧视中的投影摆放——朝向镜头或背离镜头时投影变短；
+   * 鳍尖在体轴上方时图层沿鳍的长轴翻过来（与肚子朝上时翻转的画一致），转到与体轴平行时变窄。
+   */
+  private drawFins3D(ctx: CanvasRenderingContext2D, art: WhaleArtSet, front: boolean): void {
+    const st = this.state;
+    const rho = this.shape.roll;
+    const U = sampleProfile(UPPER, FIN_ROOT_S);
+    const L = sampleProfile(LOWER, FIN_ROOT_S);
+    const W = sampleProfile(DORSAL, FIN_ROOT_S);
+    for (const side of [1, -1]) {
+      const phi = finRootPhi(side);
+      const sp = Math.sin(phi);
+      const depth = W * Math.cos(phi) * Math.cos(rho) - (sp >= 0 ? U : L) * sp * Math.sin(rho);
+      if (depth >= 0 !== front) continue;
+      const fa = side > 0 ? st.fnA : st.ffA;
+      const fh = side > 0 ? st.fnH : st.ffH;
+      this.drawFin3D(ctx, art, rolledHeight(phi, rho, U, L, W), fa, fh);
+    }
+  }
+
+  private drawFin3D(ctx: CanvasRenderingContext2D, art: WhaleArtSet, h: number, fa: number, fh: number): void {
+    const B = ctx.getTransform();
+    const mpp = WHALE_LEN / AXIS_PX;
+    const lv = mipLevel(Math.hypot(B.a, B.b) * mpp);
+    const img = art.fin.levels[lv];
+    const r = 1 / (1 << lv);
+    const f = this.body.frame(FIN_ROOT_S, h, this.f);
+    const ca = Math.cos(f.a);
+    const sa = Math.sin(f.a);
+    // 侧视中的方向：沿体轴指向尾部 (−cos a, −sin a)，局部上方 (sin a, −cos a)
+    const dx = -fa * ca + fh * sa;
+    const dy = -fa * sa - fh * ca;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-3) return;
+    const ux = dx / len;
+    const uy = dy / len;
+    const vx = -uy;
+    const vy = ux;
+    const k = Math.max(0.3, Math.abs(Math.tanh(fh / 0.12))) * (fh <= 0 ? 1 : -1);
+    const px = FIN_PAINT_DIR.x;
+    const py = FIN_PAINT_DIR.y;
+    const qx = -py;
+    const qy = px;
+    // 画像素 → 局部坐标：沿鳍的长轴按投影长度缩放，垂直方向按宽度（含翻转）缩放
+    const a = mpp * (len * ux * px + k * vx * qx);
+    const c = mpp * (len * ux * py + k * vx * qy);
+    const b = mpp * (len * uy * px + k * vy * qx);
+    const d = mpp * (len * uy * py + k * vy * qy);
+    const e = f.x - (a * FIN_PIVOT.x + c * FIN_PIVOT.y);
+    const g = f.y - (b * FIN_PIVOT.x + d * FIN_PIVOT.y);
+    ctx.setTransform(B.a * a + B.c * b, B.b * a + B.d * b, B.a * c + B.c * d, B.b * c + B.d * d, B.a * e + B.c * g + B.e, B.b * e + B.d * g + B.f);
+    const [rx, ry, rw, rh] = FIN_RECT;
+    ctx.drawImage(img, 0, 0, Math.ceil(rw * r), Math.ceil(rh * r), rx, ry, rw, rh);
+    ctx.setTransform(B);
   }
 
   /** 胸鳍的转动（弧度）。滤食时（张嘴的画、鼓起的喉囊）、翻身、分解与静卧时身体会变形，这些时候胸鳍保持原位。 */
@@ -1452,10 +1765,10 @@ export class Whale {
       if (k <= 0.001) continue;
       const r = h.r * Math.pow(k, 1.25) * (1 + (1 - st.tissue) * 0.35);
       b.point(h.s, h.v, this.p);
-      for (let j = 0; j < 3; j++) {
+      for (let j = 0; j < HOLE_DOTS; j++) {
         const a = hash1(h.seed * 7 + j) * TAU;
-        const d = r * 0.45 * hash1(h.seed * 13 + j);
-        const rr = r * (0.7 + 0.5 * hash1(h.seed * 3 + j));
+        const d = r * 0.62 * hash1(h.seed * 13 + j);
+        const rr = r * (0.5 + 0.45 * hash1(h.seed * 3 + j));
         ctx.globalAlpha = 1;
         ctx.drawImage(dot, this.p.x + Math.cos(a) * d - rr, this.p.y + Math.sin(a) * d - rr, rr * 2, rr * 2);
       }

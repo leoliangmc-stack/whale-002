@@ -341,10 +341,10 @@ describe('descent: a graceful, quiet drift into the deep', () => {
     expect(before.lo).toBeGreaterThan(0.02);
     expect(before.hi).toBeLessThan(0.3);
     // 肚子朝上：垂向后下方，仍随水流轻轻摆动
-    const up = range(0.38, 0.42);
+    const up = range(0.4, 0.423);
     expect(up.lo).toBeGreaterThan(-2.6);
     expect(up.hi).toBeLessThan(-1.8);
-    expect(up.hi - up.lo).toBeGreaterThan(0.03);
+    expect(up.hi - up.lo).toBeGreaterThan(0.02);
     // 翻身途中胸鳍画在身体里（转动为 0），交接处没有跳变
     for (let p = 0.3; p < CONTACT_P; p += 2e-4) {
       const a = whale(p);
@@ -355,9 +355,13 @@ describe('descent: a graceful, quiet drift into the deep', () => {
     expect(whale(CONTACT_P).fin).toBe(0);
   });
 
-  it('rolls belly-up like the reference painting, and back upright before touching down', () => {
+  it('rolls belly-up like the reference painting while it sinks, and back upright before touching down', () => {
     expect(whale(0.316).roll).toBe(0);
-    for (let p = 0.36; p <= 0.43; p += 0.005) expect(whale(p).roll, `p=${p.toFixed(3)}`).toBeCloseTo(Math.PI, 3);
+    for (let p = 0.39; p <= 0.43; p += 0.005) expect(whale(p).roll, `p=${p.toFixed(3)}`).toBeCloseTo(Math.PI, 3);
+    // 一边下沉一边翻：开始翻身时已经在下沉，翻到一半时下沉速度已超过 1 m/s
+    const half = first(0.32, 0.4, (p) => whale(p).roll > Math.PI / 2);
+    expect(flow(half).flowY).toBeGreaterThan(1);
+    expect(flow(first(0.32, 0.4, (p) => whale(p).roll > 0.05)).flowY).toBeGreaterThan(0.05);
     expect(whale(0.485).roll).toBeLessThan(0.02);
     expect(whale(CONTACT_P).roll).toBe(0);
     // 转动缓慢：最快约 30°/s，整个翻身用十几秒

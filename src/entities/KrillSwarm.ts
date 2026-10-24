@@ -10,9 +10,23 @@ import type { KrillState } from '../systems/StoryTimeline';
  * 被吞入的磷虾会自然“回到”群体中；个体的小幅运动使用氛围时钟，彼此不同步。
  */
 
-const MAX = 1200;
-/** 零星磷虾（开场眼睛特写时漂过镜头前） */
+const MAX = 1500;
+/** 零星磷虾（磷虾群出现之前，从鲸鱼头部前方漂过） */
 const STRAYS = 12;
+/**
+ * 远处成群的小磷虾：几张斑点图叠在群体的不同位置与深度上（群体坐标，−1~1），各自缓慢漂移、转动。
+ * f 为沿群体方向的位置：前缘（朝向鲸鱼）先被吞掉。
+ */
+const SPECKS = [
+  { x: -0.35, y: 0.1, z: 0.55, r: 0.95, f: 0.2 },
+  { x: 0.3, y: -0.15, z: 0.35, r: 0.85, f: 0.75 },
+  { x: 0.0, y: 0.05, z: 0.1, r: 1.05, f: 0.5 },
+  { x: -0.15, y: -0.2, z: -0.1, r: 0.8, f: 0.35 },
+  { x: 0.4, y: 0.2, z: -0.3, r: 0.75, f: 0.85 },
+  { x: -0.45, y: -0.05, z: -0.5, r: 0.7, f: 0.1 },
+  { x: 0.1, y: 0.3, z: 0.75, r: 0.8, f: 0.6 },
+  { x: 0.15, y: -0.3, z: -0.7, r: 0.65, f: 0.65 },
+];
 
 export class KrillSwarm {
   readonly n = MAX;
@@ -171,8 +185,9 @@ export class KrillSwarm {
     const light = Math.max(0.78, Math.min(1.15, sh.light + sh.warm * 0.6 + 0.25));
     if (layer !== 'captured' && st.stray > 0.01) this.drawStrays(rc, layer, zSplit, tex, light);
     if (st.visible <= 0.001) return;
-    // 群体的整体“质量感”：柔和的橙色雾团
+    // 群体的整体“质量感”：柔和的橙色雾团，以及密密麻麻的小磷虾
     if (layer === 'behind') this.drawHaze(rc, light);
+    if (layer !== 'captured') this.drawSpecks(rc, layer, zSplit, light);
     const P = { x: 0, y: 0, s: 0 };
     const n = this.count;
     // 体长（米，适度夸大以便辨认）；远景时再放大一些，保持群体的颗粒感
@@ -219,7 +234,7 @@ export class KrillSwarm {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  /** 零星的几只磷虾：先于磷虾群出现，从眼睛特写前缓缓漂过。 */
+  /** 零星的几只磷虾：先于磷虾群出现，从鲸鱼头部前方缓缓漂过。 */
   private drawStrays(rc: RenderCtx, layer: 'behind' | 'front', zSplit: number, tex: CanvasImageSource & { width: number; height: number }, light: number): void {
     const st = this.state!;
     const { ctx, cam, dpr } = rc;
@@ -246,6 +261,47 @@ export class KrillSwarm {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  /** 远处成群的小磷虾（斑点图）：在鲸鱼前后两层分别绘制 */
+  private drawSpecks(rc: RenderCtx, layer: 'behind' | 'front', zSplit: number, light: number): void {
+    const st = this.state!;
+    const { ctx, cam, dpr, time } = rc;
+    const texs = st.deep > 0.5 ? textures().krillSpecksDeep : textures().krillSpecks;
+    const base = st.visible * (0.5 + 0.5 * st.agg) * (1 - 0.85 * st.scatter) * Math.min(1, light);
+    if (base < 0.02) return;
+    const ch = Math.cos(st.heading);
+    const shd = Math.sin(st.heading);
+    const P = { x: 0, y: 0, s: 0 };
+    // 画质较低时只画前几层（排在前面的几层分布在群体的中心与前后）
+    const layers = Math.min(SPECKS.length, rc.quality.krillSpecks);
+    for (let j = 0; j < layers; j++) {
+      const q = SPECKS[j];
+      const z = st.z + q.z * st.rz;
+      if (layer === 'behind' ? z <= zSplit : z > zSplit) continue;
+      // 鲸鱼张嘴吞下时，前缘的虾群先消失
+      const eaten = smoothstep(0.1 + 0.55 * (1 - q.f), 0.4 + 0.55 * (1 - q.f), st.feed);
+      const spread = 1 + st.scatter * (1.4 + q.r);
+      const lx = (q.x + 0.06 * Math.sin(time * 0.05 + j * 1.7)) * st.rx * spread;
+      const ly = (q.y + 0.06 * Math.cos(time * 0.04 + j * 2.3)) * st.ry * spread;
+      if (!cam.project(st.x + lx * ch - ly * shd, st.y + lx * shd + ly * ch, z, P)) continue;
+      const fog = clamp(1 - Math.exp(-Math.max(0, z - cam.cz - cam.dist * 0.6) / Math.max(10, rc.light.vis)));
+      const a = base * (1 - eaten) * (1 - fog) * 0.7;
+      if (a < 0.01) continue;
+      const rx = st.rx * q.r * spread * P.s;
+      const ry = st.ry * q.r * spread * P.s;
+      const tex = texs[j % texs.length];
+      const rot = st.heading + 0.25 * Math.sin(time * 0.02 + j);
+      const c = Math.cos(rot);
+      const s = Math.sin(rot);
+      const kx = ((2 * rx) / tex.width) * dpr;
+      const ky = ((2 * ry) / tex.height) * dpr;
+      ctx.setTransform(c * kx, s * kx, -s * ky, c * ky, P.x * dpr, P.y * dpr);
+      ctx.globalAlpha = a;
+      ctx.drawImage(tex, -tex.width / 2, -tex.height / 2);
+    }
+    ctx.globalAlpha = 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
   private drawHaze(rc: RenderCtx, light: number): void {
     const st = this.state!;
     const { ctx, cam, dpr } = rc;
@@ -261,7 +317,7 @@ export class KrillSwarm {
     ctx.rotate(st.heading);
     ctx.scale(1, ry / Math.max(1, rx));
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
-    const a = 0.3 * k * Math.min(1, light);
+    const a = 0.38 * k * Math.min(1, light);
     g.addColorStop(0, `rgba(240,112,62,${a})`);
     g.addColorStop(0.55, `rgba(226,92,52,${a * 0.45})`);
     g.addColorStop(1, 'rgba(210,80,50,0)');

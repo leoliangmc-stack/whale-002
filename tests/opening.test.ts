@@ -62,9 +62,18 @@ describe('opening: five continuous shots', () => {
     }
   });
 
-  it('eye detail: the camera closes in on the eye', () => {
-    const { shot } = frameAt(0.058);
-    expect(shot.frameH).toBeLessThan(10.3);
+  it('mid shot: the head and front body in frame, no close-up on the eye', () => {
+    for (let p = 0.047; p <= 0.075; p += 0.001) {
+      const { shot, eye, whale, cam } = frameAt(p);
+      expect(shot.frameH, `p=${p.toFixed(3)}`).toBeGreaterThan(17);
+      expect(shot.frameH, `p=${p.toFixed(3)}`).toBeLessThan(32);
+      if (p > 0.055 && p < 0.062) {
+        const o = { x: 0, y: 0, s: 0 };
+        cam.project(eye.x, eye.y, whale.z, o);
+        expect(o.x / cam.w).toBeGreaterThan(0.1);
+        expect(o.x / cam.w).toBeLessThan(0.9);
+      }
+    }
   });
 
   it('krill reveal: none at first, then a few strays, then the swarm', () => {

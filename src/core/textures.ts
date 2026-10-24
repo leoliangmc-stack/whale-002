@@ -234,6 +234,34 @@ export function surfaceRippleTile(w = 256, h = 128, seed = 9): Tex {
   return c;
 }
 
+/**
+ * 磷虾群里成千上万的小磷虾（远处看是一粒粒细小的橙红色斑点）：圆形范围内中间更密，
+ * 每粒是一个大致水平、略有倾斜的小椭圆，明暗不一。磷虾群把几张这样的图叠在不同深度上，
+ * 用很少的绘制次数画出密密麻麻的虾群（近处的个体仍单独绘制）。
+ */
+export function krillSpecks(size = 512, seed = 3, deep = false): Tex {
+  const [c, ctx] = makeCanvas(size, size);
+  const r = rng(seed);
+  const R = size / 2;
+  for (let i = 0; i < 2600; i++) {
+    // 中间更密：半径取近似高斯分布
+    const u = Math.min(1, Math.abs((r() + r() + r() - 1.5) / 1.5) * 1.15);
+    const a = r() * Math.PI * 2;
+    const x = R + Math.cos(a) * u * R * 0.96;
+    const y = R + Math.sin(a) * u * R * 0.96;
+    const len = 1.4 + r() * 2.4;
+    const al = (0.35 + r() * 0.6) * (1 - 0.5 * u);
+    const tone = 0.85 + r() * 0.3;
+    ctx.fillStyle = deep
+      ? `rgba(${Math.min(255, 226 * tone) | 0},${(78 * tone) | 0},${(52 * tone) | 0},${al})`
+      : `rgba(${Math.min(255, 248 * tone) | 0},${(118 * tone) | 0},${(66 * tone) | 0},${al})`;
+    ctx.beginPath();
+    ctx.ellipse(x, y, len, len * 0.42, (r() - 0.5) * 0.9, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return c;
+}
+
 /** 磷虾精灵：头朝右，橙红色半透明身体、细足与黑色复眼。 */
 export function krillSprite(size = 48, deep = false): Tex {
   const [c, ctx] = makeCanvas(size, Math.round(size * 0.5));
@@ -363,6 +391,9 @@ export interface TextureSet {
   ripple: Tex;
   krill: Tex;
   krillDeep: Tex;
+  /** 远处成群的小磷虾（几张不同的斑点图） */
+  krillSpecks: Tex[];
+  krillSpecksDeep: Tex[];
   sediment: Tex;
   ray: Tex;
   hole: Tex;
@@ -384,6 +415,8 @@ export function textures(): TextureSet {
     ripple: surfaceRippleTile(),
     krill: krillSprite(48),
     krillDeep: krillSprite(48, true),
+    krillSpecks: [krillSpecks(512, 3), krillSpecks(512, 8), krillSpecks(512, 13)],
+    krillSpecksDeep: [krillSpecks(512, 3, true), krillSpecks(512, 8, true)],
     sediment: sedimentTile(),
     ray: rayTexture(),
     hole: holeDot(),

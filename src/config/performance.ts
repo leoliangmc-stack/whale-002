@@ -5,6 +5,8 @@ export interface QualitySettings {
   name: 'low' | 'medium' | 'high';
   dprCap: number;
   krill: number;
+  /** 磷虾群中“远处成群的小磷虾”斑点图的层数 */
+  krillSpecks: number;
   snow: number;
   rays: number;
   caustics: boolean;
@@ -21,7 +23,8 @@ export const QUALITY: Record<0 | 1 | 2, QualitySettings> = {
     tier: 0,
     name: 'low',
     dprCap: 1.25,
-    krill: 320,
+    krill: 420,
+    krillSpecks: 3,
     snow: 80,
     rays: 4,
     caustics: false,
@@ -36,7 +39,8 @@ export const QUALITY: Record<0 | 1 | 2, QualitySettings> = {
     tier: 1,
     name: 'medium',
     dprCap: 2,
-    krill: 620,
+    krill: 800,
+    krillSpecks: 5,
     snow: 150,
     rays: 6,
     caustics: true,
@@ -51,7 +55,8 @@ export const QUALITY: Record<0 | 1 | 2, QualitySettings> = {
     tier: 2,
     name: 'high',
     dprCap: 2,
-    krill: 1000,
+    krill: 1250,
+    krillSpecks: 7,
     snow: 240,
     rays: 9,
     caustics: true,

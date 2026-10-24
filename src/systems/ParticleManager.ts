@@ -1,4 +1,4 @@
-import { hex, makeShade, shadeRGB, type RGB, type Shade } from '../core/color';
+import { hex, makeShade, rgba, shadeRGB, type RGB, type Shade } from '../core/color';
 import { hash1, mod, smoothstep, TAU } from '../core/math';
 import { textures } from '../core/textures';
 import type { RenderCtx } from '../core/types';
@@ -240,13 +240,34 @@ export class ParticleManager {
   drawSediment(rc: RenderCtx, t: number, x: number, seabedY: number, behind: boolean): void {
     if (t <= 0 || t >= 13) return;
     const { ctx, cam, dpr } = rc;
-    const n = rc.quality.sediment;
+    const n = Math.round(rc.quality.sediment * 1.6);
     const sh = this.sh;
     rc.light.shadeAt(x, seabedY, 0, sh);
-    const tex = this.sandDot(shadeRGB(SAND, sh, this.tmpC, 0.35));
+    const col = shadeRGB(SAND, sh, this.tmpC, 0.35);
+    const tex = this.sandDot(col);
     const P = this.wp;
     ctx.globalCompositeOperation = 'source-over';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // 身体后方涌起的一团浑浊：几十吨的身体砸进软泥，整片细泥被掀起，几秒内涨大，再慢慢沉降、变淡
+    if (behind) {
+      const k = smoothstep(0, 1.6, t) * (1 - smoothstep(5, 12, t));
+      if (k > 0.01 && cam.project(x + WHALE_LEN * (S_REF - 0.42), seabedY - 1.2 - 1.4 * smoothstep(0, 4, t), 3, P)) {
+        const rx = (13 + 7 * smoothstep(0, 5, t)) * P.s;
+        const ry = (2.6 + 2.2 * smoothstep(0, 4, t)) * P.s;
+        ctx.save();
+        ctx.translate(P.x, P.y);
+        ctx.scale(1, ry / rx);
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+        g.addColorStop(0, rgba(col, 0.32 * k));
+        g.addColorStop(0.6, rgba(col, 0.14 * k));
+        g.addColorStop(1, rgba(col, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(0, 0, rx, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
     for (let i = 0; i < n; i++) {
       const h = (k: number) => hash1(i * 11 + k);
       const tail = h(1) < 0.16;
@@ -259,7 +280,7 @@ export class ParticleManager {
       if (behind !== side > 0) continue;
       const half = tail ? 0.6 : 1.55 + 0.7 * Math.sin(Math.PI * Math.min(1, (sv - 0.1) / 0.55));
       // 向外的初速度很快被水阻耗尽（τ≈1.8 s）；身体两端的颗粒也向前 / 向后流出一些
-      const v = (tail ? 0.6 : 0.77) + h(5) * 1.0;
+      const v = (tail ? 0.9 : 1.2) + h(5) * 2.4;
       const ends = sv < 0.2 ? 0.7 : tail ? -0.6 : 0;
       const dirX = (h(6) - 0.5) * 0.9 + ends;
       const dirZ = side * (0.7 + 0.3 * h(7));
@@ -268,15 +289,15 @@ export class ParticleManager {
       const x0 = x + WHALE_LEN * (S_REF - sv) + (h(8) - 0.5) * 0.7;
       const px = x0 + dirX * reach + Math.sin(tau * 0.31 + i) * 0.07 * tau;
       const pz = side * half + dirZ * reach;
-      // 贴着海床：只升起不到一米半，随后缓慢沉降
-      const rise = (0.34 + 1.4 * h(9) * h(9)) * (1 - Math.exp(-tau / 1.1));
-      const fall = 0.05 * Math.pow(Math.max(0, tau - 2.5), 1.25);
+      // 涌起的细泥：大多贴着海床翻滚，一部分升到四五米高，随后缓慢沉降
+      const rise = (0.5 + 4.6 * Math.pow(h(9), 1.6)) * (1 - Math.exp(-tau / 1.4));
+      const fall = 0.09 * Math.pow(Math.max(0, tau - 3), 1.3);
       const py = Math.min(seabedY - 0.06, seabedY - 0.08 - rise + fall);
       if (!cam.project(px, py, pz, P)) continue;
-      const size = (0.5 + 0.55 * h(10) + 0.7 * (1 - Math.exp(-tau / 4))) * P.s;
+      const size = (0.8 + 1.0 * h(10) + 1.9 * (1 - Math.exp(-tau / 3.5))) * P.s;
       const a =
-        (tail ? 0.13 : 0.19) * smoothstep(0, 0.6, tau) * (1 - smoothstep(4, 11 - 2.5 * h(3), tau)) * (0.45 + 0.55 * h(11)) *
-        (1 - 0.5 * smoothstep(1, 2.4, rise + 0.08 - fall));
+        (tail ? 0.2 : 0.27) * smoothstep(0, 0.5, tau) * (1 - smoothstep(5, 11.5 - 2 * h(3), tau)) * (0.45 + 0.55 * h(11)) *
+        (1 - 0.45 * smoothstep(2, 5, rise + 0.08 - fall));
       if (a < 0.006 || size < 0.5) continue;
       ctx.globalAlpha = a;
       ctx.drawImage(tex, P.x - size, P.y - size * 0.55, size * 2, size * 1.1);
@@ -291,8 +312,9 @@ export class ParticleManager {
   drawSpout(rc: RenderCtx, b: number, ox: number, oy: number, oz: number): void {
     if (b <= 0 || b >= 1) return;
     const { ctx, cam, dpr } = rc;
-    const T = b * 6;
-    const n = rc.quality.spout;
+    // 喷气时间（秒）：约 2.6 秒的持续喷射，之后水雾柱在空中停留、慢慢飘散
+    const T = b * 9;
+    const n = Math.round(rc.quality.spout * 1.7);
     const mists = textures().mist;
     const dot = textures().dotHard;
     const P = { x: 0, y: 0, s: 0 };
@@ -302,8 +324,8 @@ export class ParticleManager {
       const r1 = hash1(i * 9 + 11);
       const r2 = hash1(i * 9 + 12);
       const r3 = hash1(i * 9 + 13);
-      // 持续约一秒的喷射：先喷出的冲得最高，整根水柱从海面一直连到顶端
-      const tau0 = r1 * 1.1;
+      // 持续约 2.6 秒的喷射：先喷出的冲得最高，整根水柱从海面一直连到顶端
+      const tau0 = r1 * 2.6;
       const t = T - tau0;
       if (t <= 0) continue;
       // 蓝鲸的喷气：又高又细的水雾柱，可达 9 米，顶端才散开
@@ -318,7 +340,7 @@ export class ParticleManager {
       const z = oz + (r1 - 0.5) * 0.8;
       if (!cam.project(x, y, z, P)) continue;
       const size = (0.12 + rise * 0.06 + t * 0.2) * P.s;
-      const a = 0.42 * smoothstep(0, 0.1, t) * (1 - smoothstep(1.5 + r3 * 0.8, 3.9 + r1 * 1.4, t)) * sun;
+      const a = 0.42 * smoothstep(0, 0.1, t) * (1 - smoothstep(2.4 + r3 * 1.2, 5.2 + r1 * 1.4, t)) * sun;
       if (a < 0.01) continue;
       ctx.globalAlpha = a;
       const tex = mists[i % 3];
@@ -329,7 +351,7 @@ export class ParticleManager {
     for (let i = 0; i < n * 0.4; i++) {
       const r1 = hash1(i * 13 + 3);
       const r2 = hash1(i * 13 + 4);
-      const t = T - r1 * 0.4;
+      const t = T - r1 * 2.4;
       if (t <= 0 || t > 2.6) continue;
       const v0 = 8 + r2 * 5;
       const x = ox + (r1 - 0.5) * 1.6 * t + 0.4 * t;
@@ -342,7 +364,7 @@ export class ParticleManager {
     }
     ctx.globalCompositeOperation = 'source-over';
     // 阳光下水雾里淡淡的彩虹
-    const ra = 0.055 * smoothstep(0.9, 1.6, T) * (1 - smoothstep(3.0, 4.6, T));
+    const ra = 0.055 * smoothstep(0.9, 1.6, T) * (1 - smoothstep(5.0, 7.5, T));
     if (ra > 0.005 && cam.project(ox + 0.8 + T * 0.4, oy - 3.4, oz - 0.5, P)) {
       const R = 2.8 * P.s;
       const cols = ['255,80,80', '255,170,60', '255,240,90', '90,220,120', '90,160,255', '160,110,255'];

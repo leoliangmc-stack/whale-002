@@ -62,10 +62,17 @@ export class ParallaxManager {
 
       // ---------------- 前景层
       particles.drawSediment(rc, r.sediment, whale1.state.x, WORLD.seabedY, false);
-      if (r.breath2 > 0 && r.breath2 < 1) {
+      // 喷气的水雾柱在空中：只画在水线以上（镜头潜入水下后，还在空中飘散的水雾不会出现在水里）
+      if (r.breath2 > 0 && r.breath2 < 1 && wl !== null) {
         const P = { x: 0, y: 0 };
         whale1.blowholePoint(P);
+        rc.ctx.save();
+        rc.ctx.setTransform(rc.dpr, 0, 0, rc.dpr, 0, 0);
+        rc.ctx.beginPath();
+        rc.ctx.rect(0, 0, rc.w, wl);
+        rc.ctx.clip();
         particles.drawSpout(rc, r.breath2, P.x, Math.min(P.y, 0), whale1.state.z);
+        rc.ctx.restore();
       }
       if (r.bubbles > 0.01) {
         const P = { x: 0, y: 0 };

@@ -220,7 +220,7 @@ export class OceanSurface {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // 鲸鱼位于画面中心；在与侧视镜头过渡时，对齐到侧视鲸鱼的屏幕位置
-    const k = anchor ? 1 - smoothstep(100, 260, s.alt) : 0;
+    const k = anchor ? 1 - smoothstep(96, 150, s.alt) : 0;
     const cx = lerp(w * 0.5, anchor ? anchor.x : w * 0.5, k);
     const cy = lerp(h * 0.52, anchor ? anchor.y : h * 0.52, k);
 
@@ -234,7 +234,7 @@ export class OceanSurface {
 
     // 第一次呼气：俯视的白色水雾团
     if (s.breath1 > 0 && s.breath1 < 1) {
-      const T = s.breath1 * 5;
+      const T = s.breath1 * 6.5;
       // 从正上方看，又高又细的喷气柱是一团圆形的水雾
       const blow = (S_REF - S_BLOW) * WHALE_LEN;
       const bx = cx + Math.cos(s.rot) * blow * scale;
@@ -248,7 +248,7 @@ export class OceanSurface {
         const x = bx + Math.cos(ang) * sp * scale + tt * 1.5 * scale;
         const y = by + Math.sin(ang) * sp * scale - tt * 0.5 * scale;
         const r = (0.9 + tt * 1.4) * scale;
-        ctx.globalAlpha = 0.55 * smoothstep(0, 0.2, tt) * (1 - smoothstep(1.5, 4.8, tt));
+        ctx.globalAlpha = 0.55 * smoothstep(0, 0.2, tt) * (1 - smoothstep(2.6, 6.2, tt));
         ctx.drawImage(mists[i % 3], x - r, y - r, r * 2, r * 2);
       }
       ctx.globalAlpha = 1;
@@ -257,8 +257,8 @@ export class OceanSurface {
 
     // 轻微暗角
     const vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.hypot(w, h) * 0.6);
-    vg.addColorStop(0, 'rgba(3,20,40,0)');
-    vg.addColorStop(1, 'rgba(3,20,40,0.38)');
+    vg.addColorStop(0, 'rgba(10,45,80,0)');
+    vg.addColorStop(1, 'rgba(10,45,80,0.26)');
     ctx.fillStyle = vg;
     ctx.fillRect(0, 0, w, h);
 
@@ -270,8 +270,8 @@ export class OceanSurface {
   }
 
   /**
-   * 从高空看的海面：深蓝的大洋，颜色有缓慢的大尺度起伏；两层不同方向、不同尺度的波峰（涌浪与细浪）；
-   * 太阳方向一片闪烁的碎光，零星的白浪。海面随时间缓慢流过（鲸鱼在向前游）。
+   * 从高空看的海面：与之后半水上半水下镜头里的海水同一种通透的蓝，颜色有缓慢的大尺度起伏；
+   * 两层很淡、不同尺度的波光；太阳方向一片闪烁的碎光，零星的白浪。海面随时间缓慢流过（鲸鱼在向前游）。
    * 柔和的部分（底色、起伏、波峰、反光）画在半分辨率的图层上再放大，碎光与白浪按原分辨率画在上面。
    */
   private paintSea(out: CanvasRenderingContext2D, rc: RenderCtx, scale: number, cx: number, cy: number, s: SurfaceState): void {
@@ -292,9 +292,9 @@ export class OceanSurface {
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
     const g = ctx.createRadialGradient(w * 0.55, h * 0.4, 0, w * 0.5, h * 0.5, Math.hypot(w, h) * 0.75);
-    g.addColorStop(0, '#1a5f8e');
-    g.addColorStop(0.55, '#124a75');
-    g.addColorStop(1, '#0a3157');
+    g.addColorStop(0, '#4196c6');
+    g.addColorStop(0.55, '#3585ba');
+    g.addColorStop(1, '#286fa5');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
     // 大尺度的颜色起伏（两片缓慢漂移的青色与深蓝）
@@ -303,26 +303,26 @@ export class OceanSurface {
       const y = h * (0.15 + 0.7 * hash1(i * 5 + 2)) + Math.cos(time * 0.025 + i * 2) * h * 0.05;
       const r = Math.max(w, h) * (0.25 + 0.2 * hash1(i * 5 + 3));
       const rg = ctx.createRadialGradient(x, y, 0, x, y, r);
-      rg.addColorStop(0, i % 2 ? 'rgba(8,36,66,0.35)' : 'rgba(40,120,150,0.22)');
+      rg.addColorStop(0, i % 2 ? 'rgba(24,88,140,0.2)' : 'rgba(96,176,210,0.16)');
       rg.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = rg;
       ctx.fillRect(0, 0, w, h);
     }
     // 鲸鱼就在水面下：浅色的身体把周围的海水映成青绿
     const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, WHALE_LEN * 0.75 * scale);
-    glow.addColorStop(0, `rgba(70,175,190,${0.3 - 0.08 * s.surfacing})`);
-    glow.addColorStop(1, 'rgba(70,175,190,0)');
+    glow.addColorStop(0, `rgba(110,198,214,${0.3 - 0.08 * s.surfacing})`);
+    glow.addColorStop(1, 'rgba(110,198,214,0)');
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, w, h);
 
-    // 波峰：两层平铺的波纹图案，按米缩放、沿各自的方向流动
-    const rip = textures().ripple;
+    // 波光：两层很淡的平铺图案（较长的涌浪与细碎的波纹），按米缩放、沿各自的方向流动
     ctx.globalCompositeOperation = 'lighter';
     const layers = [
-      { size: 34, ang: -0.42, speed: 1.1, a: 0.075 },
-      { size: 11, ang: 0.28, speed: 0.7, a: 0.06 },
+      { tex: textures().ripple, size: 42, ang: -0.42, speed: 1.1, a: 0.035 },
+      { tex: textures().wave, size: 16, ang: 0.28, speed: 0.7, a: 0.05 },
     ];
     for (const L of layers) {
+      const rip = L.tex;
       const k = (L.size * scale) / rip.width;
       if (k * rip.height < 3) continue;
       const c = Math.cos(L.ang);
@@ -365,21 +365,21 @@ export class OceanSurface {
       const near = Math.max(0, 1 - Math.hypot(u, v * 1.3));
       const a = near * Math.pow(Math.max(0, Math.sin(time * (0.5 + hash1(i * 3 + 3) * 0.4) + hash1(i * 3 + 4) * 20)), 4);
       if (a < 0.04) continue;
-      ctx.globalAlpha = a * 0.6;
+      ctx.globalAlpha = a * 0.5;
       const len = 1.5 + 2.5 * hash1(i * 7 + 5);
       ctx.fillRect(x - len / 2, y - 0.6, len, 1.2);
     }
     // 零星的白浪：在海面上缓慢出现、消散
     const mist = textures().mist;
-    for (let i = 0; i < 18; i++) {
+    for (let i = 0; i < 10; i++) {
       const ph = time * 0.12 + hash1(i * 11 + 1) * 10;
       const life = ph - Math.floor(ph);
       const cyc = Math.floor(ph);
       const x = ((hash1(i * 11 + 2 + cyc * 3) * 1.2 - 0.1) * w + time * 0.6 * scale) % (w * 1.2);
       const y = (hash1(i * 11 + 3 + cyc * 3) * 1.2 - 0.1) * h;
-      const r = (1.2 + hash1(i * 11 + 4) * 1.8) * scale;
-      ctx.globalAlpha = 0.28 * Math.sin(Math.PI * life);
-      ctx.drawImage(mist[i % 3], x - r * 1.6, y - r * 0.6, r * 3.2, r * 1.2);
+      const r = (2 + hash1(i * 11 + 4) * 2.5) * scale;
+      ctx.globalAlpha = 0.1 * Math.sin(Math.PI * life);
+      ctx.drawImage(mist[i % 3], x - r * 1.8, y - r * 0.5, r * 3.6, r);
     }
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
@@ -400,7 +400,7 @@ export class OceanSurface {
     ctx.rotate(s.rot);
     ctx.scale(scale, scale);
     for (const [k, a] of [[1.3, 0.1], [1.12, 0.14]] as const) {
-      ctx.fillStyle = `rgba(4,26,46,${a})`;
+      ctx.fillStyle = `rgba(14,62,104,${a})`;
       this.outline(ctx, k);
       ctx.fill();
     }
@@ -451,7 +451,7 @@ export class OceanSurface {
     const k = s.surfacing;
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.globalCompositeOperation = 'source-atop';
-    c.fillStyle = `rgba(28,112,140,${0.48 - 0.2 * k})`;
+    c.fillStyle = `rgba(52,138,176,${0.42 - 0.2 * k})`;
     c.fillRect(0, 0, 2 * R, 2 * R);
     c.globalCompositeOperation = 'source-over';
     // 露出水面的背部：深色、湿亮

@@ -48,7 +48,7 @@ export const OPENING_SHOTS = [
   { key: 'vista', title: '超远景建立尺度', from: 0.0, to: 0.014 },
   { key: 'track', title: '侧面全景跟拍', from: 0.014, to: 0.03 },
   { key: 'below', title: '低角度仰拍', from: 0.03, to: 0.047 },
-  { key: 'eye', title: '眼睛与皮肤细节', from: 0.047, to: 0.061 },
+  { key: 'mid', title: '侧面中景', from: 0.047, to: 0.061 },
   { key: 'krill', title: '磷虾群揭示', from: 0.061, to: 0.075 },
 ] as const;
 
@@ -56,7 +56,7 @@ export const SEGMENTS: Segment[] = [
   { from: 0.0, to: 0.014, seconds: 5, key: true, screens: 1 }, // 超远景：鲸鱼从远处游入
   { from: 0.014, to: 0.03, seconds: 5, key: true, screens: 1 }, // 侧面全景跟拍
   { from: 0.03, to: 0.047, seconds: 5, key: true, screens: 1 }, // 低角度仰拍：身体从上方经过
-  { from: 0.047, to: 0.061, seconds: 5, key: true, screens: 1 }, // 眼睛与皮肤细节
+  { from: 0.047, to: 0.061, seconds: 5, key: true, screens: 1 }, // 侧面中景：沿身体向头部平移
   { from: 0.061, to: 0.075, seconds: 5.5, key: true, screens: 1.1 }, // 磷虾群揭示，鲸鱼转向
   { from: 0.075, to: 0.11, seconds: 13, key: true }, // 滤食
   { from: 0.11, to: 0.125, seconds: 6 },

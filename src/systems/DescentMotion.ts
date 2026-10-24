@@ -1,6 +1,7 @@
 import { clamp, lerp, noise1, sampleProfile, smoothstep, TAU } from '../core/math';
 import { Track, type Keys } from '../core/Track';
 import { secondsAt, SEGMENTS, WORLD } from '../config/stages';
+import { finNeutral, finNormal, type Vec3 } from '../entities/FinGeometry';
 import { S_REF, UPPER, WHALE_LEN } from '../entities/WhaleBody';
 
 /**
@@ -11,9 +12,10 @@ import { S_REF, UPPER, WHALE_LEN } from '../entities/WhaleBody';
  *     在“故事时间”（自动播放时的秒数）上积分一次并制成查找表。查表只依赖叙事进度，
  *     因此前进、倒退、暂停和任意跳转都得到同一个位置、姿态与镜头状态；
  *  2. 尾柄、尾叶、胸鳍和头部是独立的被动动画层，由二阶阻尼跟随产生不同程度的惯性与滞后；
- *     胸鳍是被相对水流推动的铰链：法向（上下）的水流把它托向上方，沿体轴的水流把它顺向体轴。
- *     低头下沉时海水大致沿体轴从头流向尾，胸鳍顺着水流贴向身体、轻轻摆动；接近海床、下沉放缓时水流变弱，
- *     胸鳍回到画中的姿态；
+ *     胸鳍是以肩关节为铰链的被动硬桨（见 entities/FinGeometry.ts）：水动力把它像风向标一样转向相对水流，
+ *     水流把它推向身体时才被体侧挡住、顺着体侧向后。肚子朝上低头下沉时，海水从吻端流向尾部、同时自下而上
+ *     流过，朝上的胸鳍被托离身体、顺着水流斜向后上方，并随涡旋脱落与水流扰动不停地轻轻摆动；
+ *     接近海床、下沉放缓时水流变弱，胸鳍回到画中的姿态；
  *  3. 停止游动、开始下沉之后，身体一边下沉一边缓缓翻过来（约 35 秒），之后保持肚子朝上，背部先着地，
  *     肚子朝上躺在海床上；
  *  4. 1800 米的下沉被艺术化压缩：鲸鱼相对周围水体的“可见下沉”只有约 3.5 m/s，
@@ -78,10 +80,11 @@ const ROLL: Keys = [
   [DESCENT_START, 0], [0.327, 0], [0.333, 0.1], [0.34, 0.34], [0.348, 0.72], [0.357, 1.2], [0.367, 1.75],
   [0.377, 2.28], [0.387, 2.72], [0.396, 3.0], [0.404, Math.PI], [DESCENT_END, Math.PI],
 ];
-/** 胸鳍随相对水流的偏转（弧度）：法向（上下）水流按二次阻力托起胸鳍，沿体轴的水流把它顺向后方 */
-const FIN_LIFT = 0.075;
-const FIN_STREAM = 0.1;
-const FIN_MAX = 0.6;
+/** 胸鳍：水流速度为 FIN_U0 时，水动力与回到自然姿态的趋势（重力、关节）各占一半 */
+const FIN_U0 = 0.6;
+/** 胸鳍根部的形状让它离开体侧一点（外法线方向的偏置），被水流压向身体时也留出的最小夹角 */
+const FIN_OUT = 0.3;
+const FIN_GAP = 0.08;
 /** 贴近海床时被挤压的水垫阻力（线性阻尼） */
 const CUSHION: Keys = [[DESCENT_START, 0], [0.464, 0], [0.478, 0.22], [0.488, 0.7], [0.495, 1.5], [DESCENT_END, 2.2]];
 /** 深度压缩的速度形状（0~1）：离开海面光区之后才开始，接触海床之前结束 */
@@ -141,13 +144,112 @@ class Lag2 {
 }
 
 const CHANNELS = [
-  'x', 'y', 'pitch', 'beat', 'beatPh', 'flex', 'nod', 'fluke', 'finN', 'finF', 'arc', 'roll', 'fin',
+  'x', 'y', 'pitch', 'beat', 'beatPh', 'flex', 'nod', 'fluke', 'fnA', 'fnH', 'fnZ', 'ffA', 'ffH', 'ffZ', 'arc', 'roll', 'fin',
   'vx', 'vy', 'lagX', 'lagY', 'hidden', 'waterX', 'waterY',
 ] as const;
 type Channel = (typeof CHANNELS)[number];
 
 /** 某一进度下的完整动作状态 */
 export type DescentSample = Record<Channel, number>;
+
+/**
+ * 一侧胸鳍（以肩关节为铰链的被动硬桨）：目标方向是相对水流的方向（被体侧挡住时贴着体侧顺向后方），
+ * 水流越弱越接近画中的自然姿态；叠加缓慢的水流扰动与涡旋脱落引起的轻微颤动。
+ * 方向向量的三个分量各自做二阶跟随，得到惯性与滞后，采样时归一化。
+ */
+class FinSim {
+  private readonly la = new Lag2(TAU / 2.5, 0.4);
+  private readonly lh = new Lag2(TAU / 2.5, 0.4);
+  private readonly lz = new Lag2(TAU / 2.5, 0.4);
+  private readonly n: Vec3 = { a: 0, h: 0, z: 0 };
+  private readonly g: Vec3 = { a: 0, h: 0, z: 0 };
+  readonly t: Vec3 = { a: 0, h: 0, z: 0 };
+  readonly out: Vec3 = { a: 0, h: 0, z: 0 };
+
+  constructor(
+    private readonly side: number,
+    private readonly seed: number,
+  ) {}
+
+  /**
+   * wa / wh：相对水流（m/s）沿体轴流向尾部、垂直于体轴流向局部上方的分量；
+   * k：水动力的权重上限（开始与着陆时为 0，回到画中的姿态）；stir：水流扰动强度。
+   */
+  target(rho: number, wa: number, wh: number, k: number, stir: number, t: number): Vec3 {
+    const n = finNormal(this.side, rho, this.n);
+    const T = finNeutral(rho, this.t);
+    const U = Math.hypot(wa, wh);
+    const g = this.g;
+    const w = U > 1e-4 ? ((U * U) / (U * U + FIN_U0 * FIN_U0)) * k : 0;
+    if (w > 0) {
+      g.a = wa / U + FIN_OUT * n.a;
+      g.h = wh / U + FIN_OUT * n.h;
+      g.z = FIN_OUT * n.z;
+      unit(g);
+      push(g, n, FIN_GAP);
+      T.a += (g.a - T.a) * w;
+      T.h += (g.h - T.h) * w;
+      T.z += (g.z - T.z) * w;
+      unit(T);
+    }
+    // 扰动：e1 是离开身体的方向（外法线中垂直于目标方向的部分），e2 = T × e1
+    const d = n.a * T.a + n.h * T.h + n.z * T.z;
+    const e1 = { a: n.a - d * T.a, h: n.h - d * T.h, z: n.z - d * T.z };
+    unit(e1);
+    const sd = this.seed;
+    const slow = stir * (0.17 * noise1(t * 0.19, sd) + 0.08 * noise1(t * 0.43, sd + 1));
+    const flutter = w * 0.075 * Math.sin(TAU * 0.55 * t + 2.5 * noise1(t * 0.11, sd + 2));
+    const lat = stir * 0.1 * noise1(t * 0.23, sd + 3) + w * 0.03 * Math.sin(TAU * 0.71 * t + 1.7 * noise1(t * 0.09, sd + 4));
+    const u1 = slow + flutter;
+    T.a += u1 * e1.a + lat * (T.h * e1.z - T.z * e1.h);
+    T.h += u1 * e1.h + lat * (T.z * e1.a - T.a * e1.z);
+    T.z += u1 * e1.z + lat * (T.a * e1.h - T.h * e1.a);
+    unit(T);
+    push(T, n, FIN_GAP * 0.5);
+    return T;
+  }
+
+  reset(v: Vec3): void {
+    this.la.reset(v.a);
+    this.lh.reset(v.h);
+    this.lz.reset(v.z);
+  }
+
+  step(v: Vec3, dt: number): void {
+    this.la.step(v.a, dt);
+    this.lh.step(v.h, dt);
+    this.lz.step(v.z, dt);
+  }
+
+  /** 当前方向（跟随的滞后可能让它略微压向体侧，这里同样挡住） */
+  sample(rho: number): Vec3 {
+    const o = this.out;
+    o.a = this.la.x;
+    o.h = this.lh.x;
+    o.z = this.lz.x;
+    unit(o);
+    push(o, finNormal(this.side, rho, this.n), FIN_GAP * 0.5);
+    return o;
+  }
+}
+
+function unit(v: Vec3): Vec3 {
+  const l = Math.hypot(v.a, v.h, v.z) || 1;
+  v.a /= l;
+  v.h /= l;
+  v.z /= l;
+  return v;
+}
+
+/** 不让方向穿进身体：与外法线的夹角余弦至少为 gap */
+function push(v: Vec3, n: Vec3, gap: number): void {
+  const d = v.a * n.a + v.h * n.h + v.z * n.z;
+  if (d >= gap) return;
+  v.a += (gap - d) * n.a;
+  v.h += (gap - d) * n.h;
+  v.z += (gap - d) * n.z;
+  unit(v);
+}
 
 export interface DescentInit {
   x: number;
@@ -259,8 +361,8 @@ export class DescentMotion {
     const flexL = new Lag2(TAU / 3.2, 0.5);
     const flukeL = new Lag2(TAU / 2.4, 0.45);
     const nodL = new Lag2(TAU / 2.2, 0.7);
-    const finL = new Lag2(TAU / 2.8, 0.42);
-    const finFarL = new Lag2(TAU / 3.4, 0.38);
+    const finN = new FinSim(1, 31);
+    const finF = new FinSim(-1, 37);
     // 身体的弓形：缓慢的二阶跟随，形成与舒展都是一个舒缓的过程
     const arcL = new Lag2(TAU / 5, 0.85);
     // 翻身：沉重的身体慢慢转过去，略带一点惯性
@@ -283,35 +385,32 @@ export class DescentMotion {
       let flexT = 0;
       let flukeT = 0;
       let nodT = 0;
-      let finT = 0;
-      let finFarT = 0;
+      let fnT: Vec3 | null = null;
+      let ffT: Vec3 | null = null;
       if (passive) {
         const flow = vy - wc;
         const n1 = 0.65 * noise1(t * 0.23, 21) + 0.35 * noise1(t * 0.53, 24);
-        const n2 = 0.65 * noise1(t * 0.31, 22) + 0.35 * noise1(t * 0.61, 25);
-        const n3 = 0.65 * noise1(t * 0.27, 23) + 0.35 * noise1(t * 0.57, 26);
         flexT = 0.11 * flow - 4.1 * om + stir * 0.19 * n1;
         // 尾叶：下沉时自下而上的水流把它托向尾柄的延长线；比尾柄更软，随尾柄的运动反向滞后
         flukeT = 0.11 * flow - 0.32 * flexL.v + stir * 0.06 * n1;
         nodT = 1.7 * om + 0.012 * flow;
-        // 胸鳍：相对水流换到体轴坐标——沿体轴 aw（正值流向吻端）、法向 nw（正值流向局部 +y，背部朝上时是腹侧）。
-        // 下沉时海水自下而上流过（nw < 0），按二次阻力把胸鳍托向上方；向前滑行时沿体轴向后的水流把它顺向体轴。
-        // 画中胸鳍转动的正方向在背部朝上时是向下张开，肚子朝上（画面翻转）时是向上张开，所以“向上”要乘以朝向
+        // 胸鳍：相对水流换到体轴坐标——沿体轴流向尾部 wa、垂直于体轴流向局部上方 wh
         const cth = Math.cos(th);
         const sth = Math.sin(th);
-        const aw = (uc - vx) * cth + (wc - vy) * sth;
-        const nw = -(uc - vx) * sth + (wc - vy) * cth;
-        const sig = Math.cos(rollL.x) >= 0 ? 1 : -1;
-        const lift = FIN_LIFT * -nw * Math.abs(nw);
-        const stream = FIN_STREAM * Math.max(0, -aw) * Math.abs(aw);
-        finT = clamp(-sig * lift - stream, -FIN_MAX, FIN_MAX) - 0.8 * om + stir * 0.05 * n2;
-        finFarT = clamp(-sig * lift * 0.85 - stream, -FIN_MAX, FIN_MAX) - 0.7 * om + stir * 0.05 * n3;
+        const wa = -((uc - vx) * cth + (wc - vy) * sth);
+        const wh = -(-(uc - vx) * sth + (wc - vy) * cth);
+        const rho = clamp(rollL.x, 0, Math.PI);
+        // 闭眼特写之后才开始（那时胸鳍不在画面里）；接近海床时下沉放缓、水流变弱，胸鳍回到画中的姿态，
+        // 着地时与静卧（以及之后的骨骼）一致
+        const kf = smoothstep(DESCENT_START, 0.3, p) * (1 - smoothstep(0.482, 0.495, p));
+        fnT = finN.target(rho, wa, wh, kf, stir * kf, t);
+        ffT = finF.target(rho, wa, wh, kf, stir * kf, t);
         if (i === 0) {
           flexL.reset(flexT);
           flukeL.reset(flukeT);
           nodL.reset(nodT);
-          finL.reset(finT);
-          finFarL.reset(finFarT);
+          finN.reset(fnT);
+          finF.reset(ffT);
         }
       }
 
@@ -329,13 +428,19 @@ export class DescentMotion {
           T.flex[k] = flexL.x;
           T.nod[k] = nodL.x;
           T.fluke[k] = flukeL.x;
-          T.finN[k] = finL.x;
-          T.finF[k] = finFarL.x;
+          const rho = clamp(rollL.x, 0, Math.PI);
+          const fn = finN.sample(rho);
+          const ff = finF.sample(rho);
+          T.fnA[k] = fn.a;
+          T.fnH[k] = fn.h;
+          T.fnZ[k] = fn.z;
+          T.ffA[k] = ff.a;
+          T.ffH[k] = ff.h;
+          T.ffZ[k] = ff.z;
           T.arc[k] = arcL.x;
           T.roll[k] = clamp(rollL.x, 0, Math.PI);
-          // 画中的胸鳍：随相对水流偏转并轻轻摆动；闭眼特写之后才开始（那时胸鳍不在画面里）。
-          // 接近海床时下沉放缓、水流变弱，胸鳍自然回到画中的姿态，着地时与静卧（以及之后的骨骼）一致
-          T.fin[k] = finL.x * smoothstep(DESCENT_START, 0.3, p) * (1 - smoothstep(0.484, 0.496, p));
+          // 画中胸鳍的平面内转动（游动时使用）：下沉途中胸鳍按上面的三维方向单独绘制
+          T.fin[k] = 0;
           T.vx[k] = vx - uc;
           T.vy[k] = vy - wc;
           T.hidden[k] = hidden;
@@ -392,8 +497,8 @@ export class DescentMotion {
         flexL.step(flexT, SIM_DT);
         flukeL.step(flukeT, SIM_DT);
         nodL.step(nodT, SIM_DT);
-        finL.step(finT, SIM_DT);
-        finFarL.step(finFarT, SIM_DT);
+        finN.step(fnT!, SIM_DT);
+        finF.step(ffT!, SIM_DT);
         arcL.step(arcT.at(p) * (1 + 0.06 * noise1(t * 0.09, 27)), SIM_DT);
         rollL.step(rollT.at(p), SIM_DT);
       }
@@ -418,21 +523,6 @@ export class DescentMotion {
       T.waterX[k] += s;
     }
 
-    // 胸鳍：翻身途中画在身体里（转动为 0），翻身开始之前与结束之后约 2 秒内渐变，交接处没有跳变
-    const gap = 2 * SAMPLE_HZ;
-    let last = -Infinity;
-    const dist = new Float64Array(n).fill(Infinity);
-    for (let k = 0; k < n; k++) {
-      if (T.roll[k] > 1e-3 && T.roll[k] < Math.PI - 1e-3) last = k;
-      dist[k] = k - last;
-    }
-    last = Infinity;
-    for (let k = n - 1; k >= 0; k--) {
-      if (T.roll[k] > 1e-3 && T.roll[k] < Math.PI - 1e-3) last = k;
-      dist[k] = Math.min(dist[k], last - k);
-    }
-    for (let k = 0; k < n; k++) T.fin[k] *= smoothstep(0, gap, dist[k]);
-
     // 静卧：着陆后很短的一段里，位置、俯仰与被动层精确收敛到静卧状态（肚子朝上）
     const ks = kOf(SETTLE_P);
     const ke = kOf(DESCENT_END);
@@ -443,7 +533,15 @@ export class DescentMotion {
       T.y[k] = lerp(T.y[k], this.restY, w);
       T.pitch[k] = lerp(T.pitch[k], 0, w);
       T.roll[k] = lerp(T.roll[k], Math.PI, w);
-      for (const c of ['flex', 'nod', 'fluke', 'finN', 'finF', 'arc', 'fin', 'vx', 'vy'] as const) T[c][k] *= 1 - w;
+      for (const c of ['flex', 'nod', 'fluke', 'arc', 'fin', 'vx', 'vy'] as const) T[c][k] *= 1 - w;
+      // 胸鳍回到画中的姿态（肚子朝上）
+      const f0 = finNeutral(Math.PI, { a: 0, h: 0, z: 0 });
+      for (const [A, H, Z] of [['fnA', 'fnH', 'fnZ'], ['ffA', 'ffH', 'ffZ']] as const) {
+        const v = unit({ a: lerp(T[A][k], f0.a, w), h: lerp(T[H][k], f0.h, w), z: lerp(T[Z][k], f0.z, w) });
+        T[A][k] = v.a;
+        T[H][k] = v.h;
+        T[Z][k] = v.z;
+      }
     }
 
     // 镜头跟随点：在水体参照系中对鲸鱼位置做带速度前馈的二阶跟随。

@@ -15,6 +15,7 @@ import { World } from '../scenes/World';
 import { AssetRegistry } from '../systems/AssetRegistry';
 import { AudioManager } from '../systems/AudioManager';
 import { DiscoveryManager } from '../systems/DiscoveryManager';
+import { Narration } from '../systems/Narration';
 import type { EcoSpeed } from '../systems/EcologyManager';
 import { ParallaxManager, profile } from '../systems/ParallaxManager';
 import { PerformanceMonitor } from '../systems/PerformanceMonitor';
@@ -36,6 +37,7 @@ export class App {
   private readonly explore: ExploreScene;
   private readonly parallax = new ParallaxManager();
   private readonly audio = new AudioManager();
+  private readonly narration = new Narration();
   private readonly assets = new AssetRegistry();
   private readonly discoveries: DiscoveryManager;
   private readonly perf: PerformanceMonitor;
@@ -57,6 +59,7 @@ export class App {
   private following = false;
   private storyReturnP = 0;
   private audioLoading = false;
+  private narrationAttached = false;
   private readonly params = new URLSearchParams(location.search);
   private systemReduced = matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -141,6 +144,7 @@ export class App {
     this.applyQuality(tier);
     this.audio.setMuted(this.prefs.muted);
     this.audio.setVolume(this.prefs.volume);
+    this.narration.enabled = this.prefs.narration && !this.params.has('nonarration');
     void this.assets.load();
     void loadWhaleArt();
     this.debugHooks();
@@ -193,6 +197,7 @@ export class App {
       reduced: this.reduced,
       quality: this.prefs.quality,
       captions: this.prefs.captions,
+      narration: this.prefs.narration,
     };
   }
 
@@ -257,6 +262,14 @@ export class App {
         this.ui.setDiscovered([]);
       },
       activity: () => this.ui.poke(),
+      toggleNarration: () => {
+        this.prefs.narration = !this.prefs.narration;
+        this.narration.setEnabled(this.prefs.narration);
+        // 打开旁白时顺便解锁声音（静音时也提示用户）
+        void this.unlockAudio();
+        if (this.prefs.narration && this.prefs.muted) this.ui.showToast('旁白已打开', '当前是静音状态，打开声音才能听到旁白。', 4000);
+        this.savePrefs();
+      },
     };
   }
 
@@ -265,6 +278,12 @@ export class App {
     await this.audio.unlock();
     this.audio.setMuted(this.prefs.muted);
     this.audio.setVolume(this.prefs.volume);
+    const ctx = this.audio.context;
+    const bus = this.audio.voiceBus;
+    if (ctx && bus && !this.narrationAttached) {
+      this.narrationAttached = true;
+      this.narration.attach(ctx, bus);
+    }
     if (!this.audioLoading) {
       this.audioLoading = true;
       await this.assets.loadAudio(this.audio);
@@ -368,6 +387,10 @@ export class App {
     }
     if (e.key === 'm' || e.key === 'M') {
       this.uiHandlers().toggleMute();
+      return true;
+    }
+    if (e.key === 'n' || e.key === 'N') {
+      this.uiHandlers().toggleNarration();
       return true;
     }
     if ((e.key === 'r' || e.key === 'R') && this.mode === 'story') {
@@ -477,6 +500,9 @@ export class App {
       scav: sf ? sf.eco.scav : 0,
       amph: sf ? sf.eco.amph : 0,
     });
+
+    this.narration.update(dt, { story: this.mode === 'story', p, paused, velocity: this.progress.velocity });
+    this.audio.setDuck(this.narration.level);
 
     const dA = window4(p, 0.3, 0.315, 0.53, 0.555) + window4(p, 0.83, 0.845, 0.94, 0.955);
     this.ui.update(

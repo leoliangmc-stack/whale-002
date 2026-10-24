@@ -23,11 +23,48 @@ const BONE = {
   mat: hex('#f2eedb'),
   matYellow: hex('#e8d58a'),
   matOrange: hex('#e3a35a'),
-  ose: hex('#d66a7a'),
-  oseLight: hex('#f09aa4'),
+  ose: hex('#c8475a'),
+  oseLight: hex('#ec8f98'),
   root: hex('#7fa36a'),
   light: hex('#f6f1e2'),
 };
+
+const matCache = new Map<string, HTMLCanvasElement>();
+
+/**
+ * 细菌席的精灵：边缘柔和、带一点斑驳的薄膜（近看时代替实心的椭圆）。按着色之后的颜色缓存
+ * （颜色随深度与光照缓慢变化，量化之后只会生成少数几张）。
+ */
+function matSprite(col: RGB, kind: number): HTMLCanvasElement {
+  const key = `${kind}:${col[0] >> 3},${col[1] >> 3},${col[2] >> 3}`;
+  let c = matCache.get(key);
+  if (c) return c;
+  if (matCache.size > 24) matCache.clear();
+  const [r, g, b] = col.map((v) => Math.round(clamp(v, 0, 255)));
+  c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 48;
+  const x = c.getContext('2d')!;
+  const gr = x.createRadialGradient(64, 64, 2, 64, 64, 62);
+  gr.addColorStop(0, `rgba(${r},${g},${b},0.92)`);
+  gr.addColorStop(0.55, `rgba(${r},${g},${b},0.7)`);
+  gr.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  x.setTransform(1, 0, 0, 0.38, 0, 0);
+  x.fillStyle = gr;
+  x.fillRect(0, 0, 128, 128);
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  // 斑驳：一些更亮、更暗的小点
+  for (let k = 0; k < 40; k++) {
+    const px = 20 + hash1(k * 7 + kind) * 88;
+    const py = 14 + hash1(k * 13 + kind) * 22;
+    x.fillStyle = k % 3 ? 'rgba(255,255,245,0.16)' : 'rgba(40,40,34,0.12)';
+    x.beginPath();
+    x.ellipse(px, py, 2 + hash1(k * 3) * 5, 1 + hash1(k * 5) * 2, 0, 0, TAU);
+    x.fill();
+  }
+  matCache.set(key, c);
+  return c;
+}
 
 /** 头骨上的骨质鼻孔（画框像素）：隐藏发现里的小端足类躲在这里 */
 export const NARES = { x: 2297, y: 168 };
@@ -117,6 +154,8 @@ export class WhaleSkeleton {
   private readonly p = { x: 0, y: 0 };
   private readonly slices: Slice[] = [];
   private anchors: Anchor[] | null = null;
+  /** 羽状鳃的控制点（复用） */
+  private readonly pinn: number[] = [];
   /** 画面沿体轴上下翻转（肚子朝上）时为 −1 */
   private flip = 1;
   /** 附着点是按哪个朝向找出来的 */
@@ -370,27 +409,44 @@ export class WhaleSkeleton {
     const ga = ctx.globalAlpha;
     const t = rc.eco;
 
-    // ---- 细菌席：按颜色分三批
+    // ---- 细菌席：按颜色分三批。远看是骨面上的一层薄膜；近看是边缘柔和、带丝状绒毛的一片
     if (st.mats > 0.01) {
       const matCols = [BONE.mat, BONE.matYellow, BONE.matOrange];
-      ctx.globalAlpha = ga * 0.6;
-      for (let c = 0; c < 3; c++) {
-        ctx.beginPath();
-        for (let i = 0; i < n; i++) {
-          const o = i * 6;
-          const km = smoothstep(att[o + 2], att[o + 2] + 0.25, st.mats);
-          if (km <= 0.01) continue;
-          const kind = hash1(att[o + 5] * 3);
-          if ((kind > 0.92 ? 2 : kind > 0.7 ? 1 : 0) !== c) continue;
-          const r = att[o + 4] * (0.25 + 1.05 * km);
-          const x = att[o];
-          const y = att[o + 1] - r * 0.15;
-          ctx.moveTo(x + r * 1.5, y);
-          ctx.ellipse(x, y, r * 1.5, r * 0.5, 0, 0, TAU);
+      if (scale > 110) {
+        for (let c = 0; c < 3; c++) {
+          const spr = matSprite(shadeRGB(matCols[c], sh, this.tmp, 0.15), c);
+          ctx.globalAlpha = ga * 0.85;
+          for (let i = 0; i < n; i++) {
+            const o = i * 6;
+            const km = smoothstep(att[o + 2], att[o + 2] + 0.25, st.mats);
+            if (km <= 0.01) continue;
+            const kind = hash1(att[o + 5] * 3);
+            if ((kind > 0.92 ? 2 : kind > 0.7 ? 1 : 0) !== c) continue;
+            const r = att[o + 4] * (0.25 + 1.05 * km);
+            ctx.drawImage(spr, att[o] - r * 1.7, att[o + 1] - r * 0.72, r * 3.4, r * 1.2);
+          }
         }
-        ctx.fillStyle = rgba(shadeRGB(matCols[c], sh, this.tmp, 0.15));
-        ctx.fill();
+      } else {
+        ctx.globalAlpha = ga * 0.6;
+        for (let c = 0; c < 3; c++) {
+          ctx.beginPath();
+          for (let i = 0; i < n; i++) {
+            const o = i * 6;
+            const km = smoothstep(att[o + 2], att[o + 2] + 0.25, st.mats);
+            if (km <= 0.01) continue;
+            const kind = hash1(att[o + 5] * 3);
+            if ((kind > 0.92 ? 2 : kind > 0.7 ? 1 : 0) !== c) continue;
+            const r = att[o + 4] * (0.25 + 1.05 * km);
+            const x = att[o];
+            const y = att[o + 1] - r * 0.15;
+            ctx.moveTo(x + r * 1.5, y);
+            ctx.ellipse(x, y, r * 1.5, r * 0.5, 0, 0, TAU);
+          }
+          ctx.fillStyle = rgba(shadeRGB(matCols[c], sh, this.tmp, 0.15));
+          ctx.fill();
+        }
       }
+      ctx.globalAlpha = ga * 0.6;
       if (scale > 120) {
         // 丝状细菌的绒毛边缘
         ctx.beginPath();
@@ -414,32 +470,50 @@ export class WhaleSkeleton {
       }
     }
 
-    // ---- 食骨蠕虫
+    // ---- 食骨蠕虫（Osedax）：从骨头里伸出的半透明躯干，顶端一簇红色的羽状鳃，随水流轻轻摆动。
+    // 近看时一个附着点上是一小片密集的群落；远看时只是骨面上一层粉红色的“绒毯”
     if (st.osedax > 0.01) {
       const plume = rgba(shadeRGB(BONE.ose, sh, this.tmp, 0.25));
-      const detail = scale > 200;
+      const close = scale >= 110;
+      const fine = scale > 220;
+      // 屏幕之外的附着点不画（特写时绝大部分都在画面之外）
+      const B = ctx.getTransform();
+      const W = ctx.canvas.width;
+      const H = ctx.canvas.height;
+      const vis = (x: number, y: number) => {
+        const sx = B.a * x + B.c * y + B.e;
+        const sy = B.b * x + B.d * y + B.f;
+        return sx > -60 && sx < W + 60 && sy > -60 && sy < H + 60;
+      };
+      const worms = (i: number) => {
+        const seed = att[i * 6 + 5];
+        return close ? 7 + Math.floor(hash1(seed * 7) * 7) : 3 + Math.floor(hash1(seed * 7) * 4);
+      };
       if (scale >= 70) {
+        // 躯干
         ctx.beginPath();
         for (let i = 0; i < n; i++) {
           const o = i * 6;
           const ko = smoothstep(att[o + 3], att[o + 3] + 0.2, st.osedax);
-          if (ko <= 0.01) continue;
+          if (ko <= 0.01 || !vis(att[o], att[o + 1])) continue;
           const seed = att[o + 5];
-          const cnt = 3 + Math.floor(hash1(seed * 7) * 4);
+          const cnt = worms(i);
           for (let k = 0; k < cnt; k++) {
-            const ox = (hash1(seed * 13 + k) - 0.5) * 0.18;
-            const hgt = (0.04 + hash1(seed * 17 + k) * 0.05) * ko;
-            const sway = Math.sin(t * (0.9 + k * 0.13) + seed * 1.7 + k) * 0.012;
+            const ox = (hash1(seed * 13 + k) - 0.5) * (close ? 0.26 : 0.18);
+            const hgt = (0.025 + hash1(seed * 17 + k) * 0.035) * ko;
+            const sway = Math.sin(t * (0.9 + k * 0.13) + seed * 1.7 + k) * 0.01;
             ctx.moveTo(att[o] + ox, att[o + 1]);
-            ctx.lineTo(att[o] + ox + sway, att[o + 1] - hgt);
+            ctx.quadraticCurveTo(att[o] + ox + sway * 0.3, att[o + 1] - hgt * 0.6, att[o] + ox + sway, att[o + 1] - hgt);
           }
         }
-        ctx.globalAlpha = ga;
+        ctx.globalAlpha = ga * 0.85;
         ctx.strokeStyle = rgba(shadeRGB(BONE.oseLight, sh, this.tmp, 0.3));
-        ctx.lineWidth = Math.max(0.005, 0.6 / scale);
+        ctx.lineWidth = Math.max(0.004, 0.6 / scale);
         ctx.stroke();
       }
       ctx.beginPath();
+      const pinn: number[] = this.pinn;
+      pinn.length = 0;
       for (let i = 0; i < n; i++) {
         const o = i * 6;
         const ko = smoothstep(att[o + 3], att[o + 3] + 0.2, st.osedax);
@@ -447,38 +521,72 @@ export class WhaleSkeleton {
         const x = att[o];
         const y = att[o + 1];
         const seed = att[o + 5];
-        const cnt = 3 + Math.floor(hash1(seed * 7) * 4);
         if (scale < 70) {
-          // 远观：一小片粉红色的“绒毯”
+          const cnt = 3 + Math.floor(hash1(seed * 7) * 4);
           const rx = (0.04 + 0.01 * cnt) * ko;
           ctx.moveTo(x + 0.03 + rx, y - 0.02);
           ctx.ellipse(x + 0.03, y - 0.02, rx, 0.03 * ko, 0, 0, TAU);
           continue;
         }
+        if (!vis(x, y)) continue;
+        const cnt = worms(i);
         for (let k = 0; k < cnt; k++) {
-          const ox = (hash1(seed * 13 + k) - 0.5) * 0.18;
-          const hgt = (0.04 + hash1(seed * 17 + k) * 0.05) * ko;
-          const sway = Math.sin(t * (0.9 + k * 0.13) + seed * 1.7 + k) * 0.012;
+          const ox = (hash1(seed * 13 + k) - 0.5) * (close ? 0.26 : 0.18);
+          const hgt = (0.025 + hash1(seed * 17 + k) * 0.035) * ko;
+          const sway = Math.sin(t * (0.9 + k * 0.13) + seed * 1.7 + k) * 0.01;
           const tx = x + ox + sway;
           const ty = y - hgt;
-          if (!detail) {
-            // 中景：每个羽冠画成一个小圆团
+          if (!close) {
             ctx.moveTo(tx + 0.02, ty - 0.012);
             ctx.arc(tx, ty - 0.012, 0.02, 0, TAU);
             continue;
           }
+          // 4 条羽状鳃：从顶端向上、向两侧弯出，随水流一起摆动
+          const len = (0.03 + 0.018 * hash1(seed * 23 + k)) * (0.6 + 0.4 * ko);
+          const flow = Math.sin(t * 0.7 + seed * 0.3) * 0.25 + Math.sin(t * (1.6 + 0.2 * k) + k) * 0.08;
           for (let q = 0; q < 4; q++) {
-            const ang = -Math.PI / 2 + (q - 1.5) * 0.45 + sway * 6;
-            const px = tx + Math.cos(ang) * 0.012;
-            const py = ty + Math.sin(ang) * 0.016;
-            ctx.moveTo(px, py);
-            ctx.ellipse(px, py, 0.006, 0.018, ang + Math.PI / 2, 0, TAU);
+            const ang = -Math.PI / 2 + (q - 1.5) * 0.42 + flow;
+            const ex = tx + Math.cos(ang) * len;
+            const ey = ty + Math.sin(ang) * len;
+            const bx = tx + Math.cos(ang - 0.35) * len * 0.55;
+            const by = ty + Math.sin(ang - 0.35) * len * 0.55;
+            ctx.moveTo(tx, ty);
+            ctx.quadraticCurveTo(bx, by, ex, ey);
+            if (fine) pinn.push(tx, ty, bx, by, ex, ey);
           }
         }
       }
       ctx.globalAlpha = ga * (scale < 70 ? 0.55 : 1);
-      ctx.fillStyle = plume;
-      ctx.fill();
+      if (close) {
+        ctx.strokeStyle = plume;
+        ctx.lineWidth = Math.max(0.0045, 0.9 / scale);
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = plume;
+        ctx.fill();
+      }
+      if (fine && pinn.length) {
+        // 羽状鳃两侧细小的羽枝
+        ctx.beginPath();
+        for (let j = 0; j < pinn.length; j += 6) {
+          for (let m = 1; m <= 4; m++) {
+            const u = m / 5;
+            const iu = 1 - u;
+            const px = iu * iu * pinn[j] + 2 * iu * u * pinn[j + 2] + u * u * pinn[j + 4];
+            const py = iu * iu * pinn[j + 1] + 2 * iu * u * pinn[j + 3] + u * u * pinn[j + 5];
+            const dx = pinn[j + 4] - pinn[j];
+            const dy = pinn[j + 5] - pinn[j + 1];
+            const l = Math.hypot(dx, dy) || 1;
+            const w = 0.006 * (1 - u * 0.5);
+            ctx.moveTo(px - (dy / l) * w, py + (dx / l) * w);
+            ctx.lineTo(px + (dy / l) * w, py - (dx / l) * w);
+          }
+        }
+        ctx.strokeStyle = rgba(shadeRGB(BONE.oseLight, sh, this.tmp, 0.3));
+        ctx.lineWidth = Math.max(0.002, 0.5 / scale);
+        ctx.stroke();
+      }
       if (scale > 300) {
         // 微观：食骨蠕虫伸入骨头的绿色“根系”
         ctx.beginPath();

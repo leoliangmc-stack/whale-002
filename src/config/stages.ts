@@ -74,8 +74,8 @@ export const SEGMENTS: Segment[] = [
   { from: 0.345, to: 0.46, seconds: 46 }, // C → D：翻成肚子朝上，保持这个姿态稳定下沉，镜头拉远进入深海
   { from: 0.46, to: 0.51, seconds: 16, key: true }, // 接近并接触海床（肚子朝上，背部着地）
   { from: 0.51, to: 0.55, seconds: 8 },
-  { from: 0.55, to: 0.7, seconds: 32, key: true }, // 身体变化
-  { from: 0.7, to: 0.8, seconds: 26, key: true }, // 鲸骨生态
+  { from: 0.55, to: 0.7, seconds: 40, key: true }, // 身体变化：食腐动物撕咬与钻食的近景
+  { from: 0.7, to: 0.8, seconds: 44, key: true }, // 鲸骨生态：几处骨骼的特写
   { from: 0.8, to: 0.87, seconds: 16, key: true }, // 磷虾重新聚集
   { from: 0.87, to: 0.93, seconds: 12 },
   { from: 0.93, to: 0.96, seconds: 9, key: true }, // 新鲸鱼出现
@@ -156,6 +156,13 @@ export const CAPTIONS: Caption[] = [
   { from: 0.9, to: 0.935, text: '磷虾群向着阳光的方向聚集……' },
   { from: 0.94, to: 0.975, text: '深蓝之中，一个巨大的身影正在靠近。' },
   { from: 0.978, to: 0.999, text: '一个生命的结束，成为无数生命的新起点。' },
+];
+
+/** 鲸骨的特写镜头（阶段 7，见 StoryTimeline 的 CAM_ROWS）：声音系统据此放骨面上的细碎声响 */
+export const BONE_CLOSEUPS: ReadonlyArray<{ from: number; to: number; subject: 'vertebrae' | 'ribs' | 'skull' }> = [
+  { from: 0.716, to: 0.739, subject: 'vertebrae' },
+  { from: 0.746, to: 0.762, subject: 'ribs' },
+  { from: 0.769, to: 0.783, subject: 'skull' },
 ];
 
 /** 鲸落时间流逝提示（身体分解阶段）。 */

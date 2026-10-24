@@ -102,6 +102,7 @@ export class AudioManager {
   private nextHeart = 0;
   private nextCrunch = 2;
   private lastStroke = 0;
+  private voice: GainNode | null = null;
   muted = false;
   volume = 0.7;
   /** 声音素材：key → AudioBuffer，由 AssetRegistry 按 manifest.json 注入（whaleAB / whaleAB2 / whaleB / chorus，以及可选的 spout） */
@@ -196,8 +197,20 @@ export class AudioManager {
       o.connect(og).connect(this.drone);
       o.start();
     }
+    this.voice = ctx.createGain();
+    this.voice.connect(this.master);
     this.startChorus();
     this.applyVolume();
+  }
+
+  /** 旁白的输出（见 Narration）：跟随静音与音量，不被压低、不加混响。声音解锁之前为 null */
+  get voiceBus(): AudioNode | null {
+    return this.voice;
+  }
+
+  /** 旁白说话时压低环境声与音效（0 不压低，1 完全压低到目标电平） */
+  setDuck(amount: number): void {
+    void amount;
   }
 
   /** 声音素材加载完成后调用：开始循环播放远处的合唱 */

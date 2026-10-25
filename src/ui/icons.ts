@@ -22,6 +22,4 @@ export const ICON = {
   down: s('<path d="M6 9l6 6 6-6"/>'),
   up: s('<path d="M6 15l6-6 6 6"/>'),
   motion: s('<path d="M3 12h4l3-7 4 14 3-7h4"/>'),
-  voice: s('<path d="M4 5h16v10H10l-5 4v-4H4z"/><path d="M8 9h8M8 12h5"/>'),
-  voiceOff: s('<path d="M4 5h16v10H10l-5 4v-4H4z"/><path d="M3 3l18 18"/>'),
 };

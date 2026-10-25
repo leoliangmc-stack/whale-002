@@ -249,7 +249,7 @@ export interface Cue {
   view: View;
   /** 速度比 1.6 < r ≤ 3.5 时仍触发、且彼此间隔 ≥ 2 s 的主角音效（1.7） */
   hero?: boolean;
-  /** 鲸鸣：旁白在说话时等待，最晚到这个 p */
+  /** 鲸鸣：从触发点到这个 p 是它的区间——有旁白在说话时最多等到这里；跳转、拖动之后停在区间里时补唱 */
   latest?: number;
   pan?: number;
   /** 声像在 panDur 秒内移动到 panTo */
@@ -304,12 +304,12 @@ function boneTicks(): Cue[] {
 
 const TABLE: Cue[] = [
   // 鲸鱼入场：超远景里它还只是雾蓝中的一个小影子，先听见远处传来的一声叫声（与闭眼前最后的那一声是同一种叫声，首尾呼应）；
-  // 第一句旁白等它唱完才开始。所有鲸鸣都是所有者试听后选定的鲸鸣音效（见 docs/sound/sources.md）
-  { p: 0.0062, id: 'V03', db: -20, duck: 'whale', view: 'uw', hero: true, latest: 0.012, label: 'Q00 入场：远处的鲸鸣' },
+  // 第一句字幕等它唱完才出现。所有鲸鸣都是所有者试听后选定的鲸鸣音效（见 docs/sound/sources.md）
+  { p: 0.0062, id: 'V03', db: -15, duck: 'whale', view: 'uw', hero: true, latest: 0.012, label: 'Q00 入场：远处的鲸鸣' },
   // F02 的峰值在素材开始后约 3.8 s：从 0.030 开始，峰值落在鲸鱼正从头顶经过的 p ≈ 0.0425
   { p: 0.03, id: 'F02', db: -27, duck: 'sfx', view: 'uw', label: 'Q01 巨体滑过' },
-  // 近处的鲸鸣：第一句旁白说完之后，镜头升回与鲸鱼相近的高度、头部与前半身在画面中时
-  { p: 0.0485, id: 'V01', db: -19, duck: 'whale', view: 'uw', hero: true, latest: 0.055, label: 'Q02 鲸鸣（近）' },
+  // 近处的鲸鸣：第一句字幕之后，镜头升回与鲸鱼相近的高度、头部与前半身在画面中时
+  { p: 0.0485, id: 'V01', db: -14, duck: 'whale', view: 'uw', hero: true, latest: 0.055, label: 'Q02 鲸鸣（近）' },
   { p: 0.077, id: 'F03', db: -19, duck: 'hero', view: 'uw', hero: true, label: 'Q03 吞水' },
   { p: 0.104, id: 'F04', db: -25, duck: 'sfx', view: 'uw', label: 'Q04 滤水' },
   { p: 0.1125, id: 'F05a', db: -27, duck: 'sfx', view: 'uw', label: 'Q05 气泡' },
@@ -325,18 +325,18 @@ const TABLE: Cue[] = [
   { p: 0.202, id: 'F11', db: -18, duck: 'free', view: 'air', hero: true, label: 'Q16 喷气' },
   { p: 0.2082, id: 'F12', db: -24, duck: 'sfx', view: 'air', label: 'Q17 吸气' },
   { p: 0.218, id: 'F14', db: -22, duck: 'hero', view: 'any', hero: true, label: 'Q18 入水' },
-  // 闭眼之前，这头蓝鲸一生中最后的一声（近处、略放慢、尾音渐弱）：排在“漫长的一生”这句旁白之后，眼睑在叫声渐弱时才开始合上。
+  // 闭眼之前，这头蓝鲸一生中最后的一声（近处、略放慢、尾音渐弱）：排在“漫长的一生”这句字幕之后，眼睑在叫声渐弱时才开始合上。
   // 之后不再安排远方同伴的鲸鸣——闭眼之后的第一声鲸鸣容易被听成这头鲸鱼自己
-  { p: 0.2425, id: 'V05', db: -18, duck: 'whale', view: 'uw', hero: true, latest: 0.2455, label: 'Q19 最后的一声' },
+  { p: 0.2425, id: 'V05', db: -14, duck: 'whale', view: 'uw', hero: true, latest: 0.2455, label: 'Q19 最后的一声' },
   { p: 0.4205, id: 'F23', db: -33, duck: 'sperm', view: 'uw', pan: -0.25, label: 'Q20 抹香鲸' },
-  { p: 0.445, id: 'V02', db: -27, duck: 'whale', view: 'uw', hero: true, latest: 0.46, label: 'Q21 深海鲸鸣' },
+  { p: 0.445, id: 'V02', db: -22, duck: 'whale', view: 'uw', hero: true, latest: 0.46, label: 'Q21 深海鲸鸣' },
   { p: 0.497, id: 'F15a', db: -18, duck: 'free', view: 'uw', hero: true, label: 'Q22 着地' },
   { p: 0.4975, id: 'F16', db: -28, duck: 'sfx', view: 'uw', label: 'Q23 沉积物' },
   { p: 0.5045, id: 'F15b', db: -26, duck: 'sfx', view: 'uw', label: 'Q24 头部落下' },
   { p: 0.5125, id: 'F15c', db: -30, duck: 'sfx', view: 'uw', label: 'Q25 尾部落下' },
   { p: HAG_HOLES[0].p + 0.0005, id: 'F19', db: -30, duck: 'sfx', view: 'uw', pan: -0.2, label: 'Q26 盲鳗' },
   { p: HAG_HOLES[6].p + 0.0005, id: 'F19', db: -31, duck: 'sfx', view: 'uw', pan: 0.2, label: 'Q30 盲鳗' },
-  { p: 0.918, id: 'V04', db: -23, duck: 'whale', view: 'uw', hero: true, latest: 0.935, label: 'Q34 新鲸鱼' },
+  { p: 0.918, id: 'V04', db: -17, duck: 'whale', view: 'uw', hero: true, latest: 0.935, label: 'Q34 新鲸鱼' },
 ];
 
 /** 全部一次性 cue（按 p 排序）：上表 + 三次撕咬 + 骨骼特写中的细碎声 */
@@ -372,4 +372,4 @@ export const DUCK_DB: Record<DuckClass | 'bed' | 'air', number> = {
 };
 
 /** 探索模式：远方的鲸鸣每 100 / 130 / 160 s 一声，三段轮流，全部“极远”处理 */
-export const EXPLORE_CALLS = { gaps: [100, 130, 160], ids: ['V03', 'V02', 'V04'], db: -30, lpf: 800 } as const;
+export const EXPLORE_CALLS = { gaps: [100, 130, 160], ids: ['V03', 'V02', 'V04'], db: -25, lpf: 800 } as const;

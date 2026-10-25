@@ -44,10 +44,10 @@
     "F21c": {"file": "audio/F21c_bone-scrape-a.mp3", "batch": 4, "lufs": -27.12},
     "F21d": {"file": "audio/F21d_bone-scrape-b.mp3", "batch": 4, "lufs": -27.34},
     "F23": {"file": "audio/F23_sperm-whale.mp3", "batch": 3, "lufs": -18.4},
-    "V01": {"file": "audio/V01_call-ab-near.mp3", "batch": 1, "lufs": -18.45},
-    "V02": {"file": "audio/V02_call-ab-deep.mp3", "batch": 3, "lufs": -18.45},
-    "V03": {"file": "audio/V03_call-b-far.mp3", "batch": 0, "lufs": -18.45},
-    "V04": {"file": "audio/V04_call-b-mid.mp3", "batch": 4, "lufs": -18.45},
-    "V05": {"file": "audio/V05_call-b-last.mp3", "batch": 0, "lufs": -18.45}
+    "V01": {"file": "audio/V01_call-near.mp3", "batch": 1, "lufs": -18.45},
+    "V02": {"file": "audio/V02_call-deep.mp3", "batch": 3, "lufs": -18.45},
+    "V03": {"file": "audio/V03_call-far.mp3", "batch": 0, "lufs": -18.45},
+    "V04": {"file": "audio/V04_call-mid.mp3", "batch": 4, "lufs": -18.45},
+    "V05": {"file": "audio/V05_call-last.mp3", "batch": 0, "lufs": -18.45}
   }
 }

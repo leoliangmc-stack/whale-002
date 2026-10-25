@@ -6,16 +6,17 @@
   （默认 ~/.cache/whale-fall-sound，不进仓库），之后可以离线重跑。--check 只打印每个素材的测量值。
 
 依据：docs/sound/cue-sheet.md（声音导演的剪辑表）与 docs/sound/sources.md（素材来源与许可）。
-每一个叙事声音都来自真实录音（水听器、实地录音），只做滤波、变速（变调）、拼接、包络、相位声码器移调
-与离线的短混响；没有任何振荡器或程序噪声生成的声音。
+除鲸鸣之外，每一个叙事声音都来自真实录音（水听器、实地录音），只做滤波、变速（变调）、拼接、包络、相位声码器移调
+与离线的短混响；没有任何振荡器或程序噪声生成的声音。鲸鸣（V01–V05）是所有者在试听后选定的 Moodist 鲸鸣音效，
+它很可能是设计过的声音，不是某一头鲸鱼的实录（见 sources.md）。
 
 来源（许可见 sources.md 与 README「声音」）：
-  - MBARI Pacific Sound（蒙特雷湾 MARS 观测站，891 m）2 kHz / 16 kHz，CC BY 4.0：蓝鲸叫声、远处的合唱、深海床；
+  - MBARI Pacific Sound（蒙特雷湾 MARS 观测站，891 m）2 kHz / 16 kHz，CC BY 4.0：远处的鲸群合唱、深海床；
   - NOAA / 美国海军 SanctSound 精选片段（美国政府作品）：水下的风浪、开阔海域、雨、潜水员呼出的气泡、
     枪虾、鱼类敲击、抹香鲸咔哒；
   - ESC-50 中单独标为 CC0 / CC BY 的 freesound 片段：空气中的海浪、海蚀洞的涌浪、溅水、倒水、呼吸、湿雪脚步；
   - Ambie（freesound 393819，Kinoton，CC0）：水下的低沉流动；
-  - Moodist 的鸥群录音（仓库声明 Pixabay / CC0，未逐个文件核实）。
+  - Moodist 的鸥群录音与鲸鸣音效（仓库声明 Pixabay / CC0，未逐个文件核实）。
 
 所有文件统一归一化到 −18 LUFS（循环床按积分响度，一次性素材按短时响度最大值），真峰值 ≤ −1 dBTP；
 循环素材前后各多留 0.2 秒（循环体的首尾），manifest 里写明循环区间。
@@ -93,14 +94,11 @@ SOURCES = {
     # 其他开源项目里许可写明的录音
     'kinoton_underwater': 'https://raw.githubusercontent.com/jenius-apps/ambie/eb29bd9946b414f7b7988d43ea5e77c537e9ab7d/src/AmbientSounds.Uwp/Assets/Sounds/underwater.wav',
     'moodist_gulls': 'https://raw.githubusercontent.com/remvze/moodist/11c0be2200116a3635880d600fd6953899cc51a3/public/sounds/animals/seagulls.mp3',
+    'moodist_whale': 'https://raw.githubusercontent.com/remvze/moodist/11c0be2200116a3635880d600fd6953899cc51a3/public/sounds/animals/whale.mp3',
 }
 
 # MBARI Pacific Sound：(桶, 日期文件, 当天的起始秒, 时长秒)
 MBARI = {
-    # 2 kHz：一头离观测站很近的蓝鲸（与 scripts/whale-audio.py 以前截取的同一段）
-    'mb_ab': ('2khz', '2018/11/MARS-20181110T000000Z-2kHz.wav', 4 * 3600 + 836, 40),
-    'mb_ab2': ('2khz', '2018/11/MARS-20181110T000000Z-2kHz.wav', 4 * 3600 + 928, 66),
-    'mb_b': ('2khz', '2018/11/MARS-20181110T000000Z-2kHz.wav', 4 * 3600 + 1056, 36),
     # 2 kHz：远处许多蓝鲸与长须鲸的合唱
     'mb_chorus': ('2khz', '2018/10/MARS-20181020T000000Z-2kHz.wav', 6 * 3600 + 1200, 420),
     # 16 kHz：深夜里一段没有船、没有鲸歌的深海环境（2016-12-21 00:25 UTC 起）
@@ -518,29 +516,6 @@ def whale_clean(x: np.ndarray, over: float, top: float = 160.0) -> np.ndarray:
     band = np.clip((f - 6) / 6, 0, 1) * np.clip((top + 40 - f) / 40, 0, 1)
     _, y = signal.istft(Z * gain * click[None, :] * band[:, None], fs, nperseg=1024, noverlap=768)
     return y[: len(x)]
-
-
-def whale_layers(y2k: np.ndarray, octave_floor_db: float = -8.0, share: float = 0.36) -> tuple[np.ndarray, float]:
-    """加速 6 倍后的原声 + 保持时长升高一个八度、带通 350–1600 Hz 的同一段录音。
-    八度层至少比原声低 8 dB（按均方根）；为了让 300 Hz 以上的能量占比达到 share，可以再高一些。"""
-    fs6 = 2000 * SPEED
-    base = resample(y2k, fs6, FS)
-    octv = resample(octave_up(y2k, fs6), fs6, FS)
-    octv = bpf(fit(octv, len(base)), 350, 1600)
-    rb = np.sqrt(np.mean(base ** 2))
-    ro = np.sqrt(np.mean(octv ** 2)) + 1e-12
-    best = octave_floor_db
-    for g in np.arange(octave_floor_db, 0.01, 0.5):
-        best = g
-        if above(base + octv * rb / ro * 10 ** (g / 20)) >= share:
-            break
-    return base + octv * rb / ro * 10 ** (best / 20), best
-
-
-def whale(lib: Library, key: str, over: float, lp: float, share: float = 0.38, fin: float = 0.25, fout: float = 1.0) -> tuple[np.ndarray, float]:
-    y, g = whale_layers(whale_clean(lib.mbari(key), over), share=share)
-    y = lpf(y, lp)
-    return fades(y, fin, fout), g
 
 
 # ------------------------------------------------------------------ 配方：每个素材的剪辑与处理
@@ -1035,47 +1010,50 @@ def f23(L):
 
 # ---- 鲸鸣（V）
 
-@recipe('V01', 'call-ab-near', 1)
+# 所有鲸鸣都来自 Moodist 的鲸鸣音效（animals/whale.mp3，所有者在试听后选定）。这段 30 秒的素材里有三次几乎一样的叫声：
+# 一声带泛音的高音呼唤，接着约 470 Hz 的长鸣，再慢慢衰减。a 从文件开头起（呼唤的开头在文件末尾，
+# 所以要用短淡入，与所有者试听的版本一样），b、c 是完整的一声。
+WHALE_CALLS = {'a': (0.0, 9.2), 'b': (10.4, 19.6), 'c': (20.95, 29.4)}
+
+
+def call(L: Library, k: str, fin: float = 0.02, fout: float = 3.0) -> np.ndarray:
+    a, b = WHALE_CALLS[k]
+    return fades(bpf(cut(L.get('moodist_whale'), a, b), 120, 8000), fin, fout)
+
+
+@recipe('V01', 'call-near', 1)
 def v01(L):
-    y, g = whale(L, 'mb_ab', 1.6, 2500, share=0.40)
-    R['V01']['octave_db'] = g
-    return y
+    # 近处、干净：与试听版本相同的处理（只去掉 120 Hz 以下与 8 kHz 以上）
+    return call(L, 'b')
 
 
-@recipe('V02', 'call-ab-deep', 3)
+@recipe('V02', 'call-deep', 3)
 def v02(L):
-    y, g = whale(L, 'mb_ab2', 1.6, 800, share=0.46)
-    R['V02']['octave_db'] = g
+    y = lpf(call(L, 'b'), 900)
     y = echoes(np.concatenate([y, np.zeros(sec(5))]), [(0.9, -9, 700), (2.1, -15, 600)])
     return fades(fit(y, len(y) - sec(2.0)), 0.01, 1.0)
 
 
-@recipe('V03', 'call-b-far', 0)
+@recipe('V03', 'call-far', 0)
 def v03(L):
-    # 鲸鱼入场时远处传来的叫声（开场第 3 秒就要用到，所以常驻）；也用于自由探索里远方的鲸鸣
-    y, g = whale(L, 'mb_b', 1.6, 1200)
-    R['V03']['octave_db'] = g
-    return fades(reverb_tail(y, 3.0, 900, -10, seed=19), 0.01, 0.8)
+    # 鲸鱼入场时远处传来的叫声（开场第 2 秒就要用到，所以常驻）；也用于自由探索里远方的鲸鸣
+    return fades(reverb_tail(call(L, 'a', fin=0.4), 2.5, 2500, -14, seed=19), 0.01, 0.8)
 
 
-@recipe('V04', 'call-b-mid', 4)
+@recipe('V04', 'call-mid', 4)
 def v04(L):
-    y, g = whale(L, 'mb_b', 1.6, 1500, share=0.40)
-    R['V04']['octave_db'] = g
-    return fades(reverb_tail(y, 2.0, 1200, -13, seed=23), 0.01, 0.6)
+    return fades(reverb_tail(call(L, 'a', fin=0.4), 2.0, 2000, -13, seed=23), 0.01, 0.6)
 
 
-@recipe('V05', 'call-b-last', 0)
+@recipe('V05', 'call-last', 0)
 def v05(L):
-    """闭眼之前，这头蓝鲸一生中最后的一声：同一声完整、缓缓下滑的 B 叫声，在近处、干净（像 V01 一样几乎不加混响）；
-    整体放慢 7%（音高略低、气息更长），结尾在约 2.5 秒里一点点弱下去，像力气慢慢用尽，最后留一点很短的水下余韵。
-    常驻（batch 0）：跳到第 3 章时也已经就绪。"""
-    y, g = whale(L, 'mb_b', 1.6, 2500, share=0.40, fout=0.05)
-    R['V05']['octave_db'] = g
+    """闭眼之前，这头蓝鲸一生中最后的一声：完整的一声（c），在近处、几乎不加混响；整体放慢 7%（音高略低、气息更长），
+    长鸣之后在约 4 秒里一点点弱下去，像力气慢慢用尽，最后留一点很短的水下余韵。常驻（batch 0）：跳到第 3 章时也已经就绪。"""
+    y = call(L, 'c', fout=0.05)
     y = resample(y, FS, FS / 0.93)
     n = len(y)
     t = n / FS
-    y = apply(y, env(n, [(0, 0), (t - 2.6, 0), (t - 1.2, -7), (t, -30)], db=True))
+    y = apply(y, env(n, [(0, 0), (t - 4.2, 0), (t - 1.8, -8), (t, -30)], db=True))
     return fades(reverb_tail(y, 1.4, 1800, -17, seed=29), 0.01, 0.6)
 
 

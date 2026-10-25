@@ -7,9 +7,9 @@ export type { AudioFrame } from './audio/director';
 /**
  * AudioManager：整段叙事的声音（WebAudio 执行层）。
  *
- * 全部声音都是真实录音（public/assets/audio/，由 scripts/sound-build.py 生成，来源与许可见 README「声音」与
- * docs/sound/sources.md）：MBARI 与 NOAA SanctSound 的水听器录音、ESC-50 中单独标为 CC0 / CC BY 的实地录音等，
- * 只做过滤波、变速、拼接、包络与离线的短混响。运行时不合成任何叙事声音、不用卷积混响；素材没有加载好时
+ * 声音素材在 public/assets/audio/，由 scripts/sound-build.py 生成，来源与许可见 README「声音」与
+ * docs/sound/sources.md：MBARI 与 NOAA SanctSound 的水听器录音、ESC-50 中单独标为 CC0 / CC BY 的实地录音等，
+ * 鲸鸣是所有者选定的 Moodist 鲸鸣音效；只做过滤波、变速、拼接、包络与离线的短混响。运行时不合成任何叙事声音、不用卷积混响；素材没有加载好时
  * 对应的声音直接跳过。唯一的合成声音是界面的“新发现”提示音（chime，不属于叙事）。
  *
  * 决定“什么时候、多响”的逻辑都在 audio/director.ts 与 audio/plan.ts（docs/sound/cue-sheet.md 的代码版本）；

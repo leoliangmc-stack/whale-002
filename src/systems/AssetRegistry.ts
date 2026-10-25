@@ -26,6 +26,8 @@ export interface AssetManifest {
 export class AssetRegistry {
   manifest: AssetManifest = {};
   private loaded: Promise<void> | null = null;
+  /** 预先下载的音频文件（解码要等声音在用户手势中解锁之后，这里只先把字节取回来） */
+  private readonly prefetched = new Map<string, Promise<ArrayBuffer | null>>();
 
   load(base = './assets/'): Promise<void> {
     this.loaded ??= this.loadManifest(base);
@@ -58,6 +60,25 @@ export class AssetRegistry {
   }
 
   /**
+   * 开场界面显示时就先下载常驻与开场批次（0、1）的音频字节：点击“开始”之后只需解码，
+   * 开场第 3 秒鲸鱼入场时的叫声就能准时响起。
+   */
+  async prefetchAudio(base = './assets/'): Promise<void> {
+    await this.load(base);
+    const list = this.manifest.audio ?? {};
+    for (const [key, v] of Object.entries(list)) {
+      const e = typeof v === 'string' ? { file: v, batch: 0 } : v;
+      if ((e.batch ?? 0) > 1 || this.prefetched.has(key)) continue;
+      this.prefetched.set(
+        key,
+        fetch(base + e.file)
+          .then((r) => (r.ok ? r.arrayBuffer() : null))
+          .catch(() => null),
+      );
+    }
+  }
+
+  /**
    * 在音频解锁后登记声音素材：第 0 批（常驻的循环床与拍尾）加载完成后返回，其余批次由 AudioManager
    * 按叙事进度按需加载、离开后释放。单个文件加载失败时这个声音只是缺席（不播放任何替代声音）。
    */
@@ -68,11 +89,14 @@ export class AssetRegistry {
     if (!ctx || !list) return;
     const entries: Record<string, AudioEntry> = {};
     for (const [key, v] of Object.entries(list)) entries[key] = typeof v === 'string' ? { file: v, batch: 0 } : v;
-    await audio.attachCatalog(entries, async (_key, e) => {
+    await audio.attachCatalog(entries, async (key, e) => {
       try {
-        const res = await fetch(base + e.file);
-        if (!res.ok) return null;
-        return await ctx.decodeAudioData(await res.arrayBuffer());
+        // 预先下载过的只用一次（解码会占用这块内存；之后再加载时重新下载）
+        const pre = this.prefetched.get(key);
+        this.prefetched.delete(key);
+        const bytes = (pre && (await pre)) || (await fetch(base + e.file).then((r) => (r.ok ? r.arrayBuffer() : null)));
+        if (!bytes) return null;
+        return await ctx.decodeAudioData(bytes);
       } catch {
         return null;
       }

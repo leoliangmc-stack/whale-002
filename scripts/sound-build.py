@@ -1050,8 +1050,9 @@ def v02(L):
     return fades(fit(y, len(y) - sec(2.0)), 0.01, 1.0)
 
 
-@recipe('V03', 'call-b-far', 3)
+@recipe('V03', 'call-b-far', 0)
 def v03(L):
+    # 鲸鱼入场时远处传来的叫声（开场第 3 秒就要用到，所以常驻）；也用于自由探索里远方的鲸鸣
     y, g = whale(L, 'mb_b', 1.6, 1200)
     R['V03']['octave_db'] = g
     return fades(reverb_tail(y, 3.0, 900, -10, seed=19), 0.01, 0.8)

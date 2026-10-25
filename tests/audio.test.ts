@@ -119,7 +119,8 @@ describe('sound director: triggering', () => {
   it('the loop seam does not lose or repeat cues (cumulative progress)', () => {
     const { played } = run(0.97, 1.05);
     const ids = played.map((x) => x.id).filter((id) => !id.startsWith('F01'));
-    expect(ids).toEqual(['F02', 'V01']);
+    // 第二圈：新的鲸鱼入场时远处的叫声（p 0.008，在接缝保护区之外）、巨体滑过、近处的鲸鸣
+    expect(ids).toEqual(['V03', 'F02', 'V01']);
     expect(played.every((x) => !inSeamGuard(x.total % 1))).toBe(true);
   });
 
@@ -144,7 +145,8 @@ describe('sound director: triggering', () => {
 
   it('a jump fades what is playing and triggers nothing', () => {
     const d = new AudioDirector((id) => DUR[id]);
-    const { t } = run(0, 0.04, { d });
+    const V01 = CUES.find((c) => c.id === 'V01')!;
+    const { t } = run(0, V01.p + 0.002, { d });
     expect(d.activeCount).toBeGreaterThan(0);
     const plan = d.step(1 / 30, frame(0.6, { total: 0.6, jumped: true }), t + 1 / 30);
     expect(plan.play.length).toBe(0);
@@ -153,21 +155,24 @@ describe('sound director: triggering', () => {
   });
 
   it('whale calls wait for the narration to finish (+0.5 s), or play −8 dB at the latest point', () => {
-    // 旁白一直说到 t = 12.5 s：V01（p 0.036 ≈ 14.4 s 在这个速度下）……
+    // 旁白一直说到 V01 的触发点之后 1 秒：V01 等旁白结束 0.5 秒后才唱；一直在说话时，到最晚的时刻以 −8 dB 唱
+    const V01 = CUES.find((c) => c.id === 'V01')!;
     const until = (end: number) => (t: number) => ({ speaking: t < end, nextStartIn: Infinity });
-    const p036 = 0.036 / 0.0025;
-    const a = run(0, 0.05, { vo: until(p036 + 1) }).played.find((x) => x.id === 'V01')!;
-    expect(a.t).toBeGreaterThanOrEqual(p036 + 1.5 - 0.05);
+    const tV = V01.p / 0.0025;
+    const end = V01.latest! + 0.003;
+    const a = run(0, end, { vo: until(tV + 1) }).played.find((x) => x.id === 'V01')!;
+    expect(a.t).toBeGreaterThanOrEqual(tV + 1.5 - 0.05);
     expect(a.db).toBe(-19);
-    const b = run(0, 0.05, { vo: until(99) }).played.find((x) => x.id === 'V01')!;
-    expect(b.total).toBeGreaterThanOrEqual(0.0445);
+    const b = run(0, end, { vo: until(99) }).played.find((x) => x.id === 'V01')!;
+    expect(b.total).toBeGreaterThanOrEqual(V01.latest!);
     expect(b.db).toBe(-27);
   });
   it('a waiting whale call keeps waiting while the story is paused, and plays after resume + 0.5 s of silence', () => {
     const d = new AudioDirector((id) => DUR[id]);
     const dt = 1 / 30;
     const rate = 0.0025;
-    let total = 0.034;
+    const V01 = CUES.find((c) => c.id === 'V01')!;
+    let total = V01.p - 0.002;
     let t = 0;
     const ids: Array<{ id: string; t: number }> = [];
     const step = (paused: boolean, speaking: boolean) => {
@@ -177,8 +182,8 @@ describe('sound director: triggering', () => {
       for (const c of plan.play) ids.push({ id: c.id, t });
     };
     step(false, true);
-    // 旁白在说话时越过 V01（p 0.036）：进入等待
-    while (total < 0.0365) step(false, true);
+    // 旁白在说话时越过 V01 的触发点：进入等待
+    while (total < V01.p + 0.0005) step(false, true);
     expect(ids.some((x) => x.id === 'V01')).toBe(false);
     // 暂停 5 秒：旁白停在半句（不在说话），鲸鸣仍然等待
     for (let i = 0; i < 150; i++) step(true, false);

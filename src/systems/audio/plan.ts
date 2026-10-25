@@ -303,9 +303,13 @@ function boneTicks(): Cue[] {
 }
 
 const TABLE: Cue[] = [
+  // 鲸鱼入场：超远景里它还只是雾蓝中的一个小影子，先听见远处传来的一声叫声（同一声 B 叫声的远处版本，
+  // 与闭眼前最后的那一声首尾呼应）；第一句旁白等它唱完才开始
+  { p: 0.0062, id: 'V03', db: -22, duck: 'whale', view: 'uw', hero: true, latest: 0.012, label: 'Q00 入场：远处的鲸鸣' },
   // F02 的峰值在素材开始后约 3.8 s：从 0.030 开始，峰值落在鲸鱼正从头顶经过的 p ≈ 0.0425
   { p: 0.03, id: 'F02', db: -27, duck: 'sfx', view: 'uw', label: 'Q01 巨体滑过' },
-  { p: 0.036, id: 'V01', db: -19, duck: 'whale', view: 'uw', hero: true, latest: 0.0445, label: 'Q02 鲸鸣（近）' },
+  // 近处的鲸鸣：第一句旁白说完之后，镜头升回与鲸鱼相近的高度、头部与前半身在画面中时
+  { p: 0.0485, id: 'V01', db: -19, duck: 'whale', view: 'uw', hero: true, latest: 0.055, label: 'Q02 鲸鸣（近）' },
   { p: 0.077, id: 'F03', db: -19, duck: 'hero', view: 'uw', hero: true, label: 'Q03 吞水' },
   { p: 0.104, id: 'F04', db: -25, duck: 'sfx', view: 'uw', label: 'Q04 滤水' },
   { p: 0.1125, id: 'F05a', db: -27, duck: 'sfx', view: 'uw', label: 'Q05 气泡' },

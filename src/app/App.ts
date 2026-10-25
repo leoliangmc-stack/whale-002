@@ -149,6 +149,8 @@ export class App {
     this.audio.setVolume(this.prefs.volume);
     this.narration.enabled = this.prefs.narration && !this.params.has('nonarration');
     void this.assets.load();
+    // 开场界面显示时先下载开场要用的声音（静音时不必）
+    if (!this.prefs.muted && !this.params.has('muted')) void this.assets.prefetchAudio();
     void loadWhaleArt();
     this.debugHooks();
     this.applyUrl();

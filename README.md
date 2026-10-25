@@ -26,6 +26,13 @@ npm test             # 单元测试（Vitest，116 项）
 
 `dist/` 是纯静态文件，可直接部署到任意静态托管（构建使用相对路径 `base: './'`，放在子目录中也能运行）。
 
+### 部署到 Vercel
+
+仓库根目录的 `vercel.json` 写好了构建设置（`npm ci` → 运行单元测试 → `npm run build`，输出 `dist/`），测试不通过时不会发布。
+在 Vercel 里 Add New → Project → 导入这个 GitHub 仓库，直接点 Deploy 即可；之后每次推送到 `main` 都会自动重新部署。
+正式网址是 `<项目名>.vercel.app`（每次部署另有带账号名的临时网址，分享时用正式网址）。Vercel 默认让浏览器每次都向服务器确认文件是否更新，
+刚部署完刷新也不会拿到旧文件。
+
 ### 部署到 GitHub Pages
 
 每次推送到 `main`，`.github/workflows/deploy-pages.yml` 会自动执行：安装依赖 → 运行单元测试 → 构建 → 把 `dist/` 发布到 `gh-pages` 分支（同时保留上一版的资源文件，见 `scripts/keep-previous-assets.mjs`：GitHub Pages 会缓存约 10 分钟，刚部署完时刷新的页面可能还在请求上一版的文件），GitHub Pages 再从该分支上线（仓库 Settings → Pages 的来源为 `gh-pages` 分支、根目录）。测试不通过时不会发布。也可以在 Actions 页面手动运行这个工作流。

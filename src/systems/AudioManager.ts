@@ -15,11 +15,10 @@ export type { AudioFrame } from './audio/director';
  * 决定“什么时候、多响”的逻辑都在 audio/director.ts 与 audio/plan.ts（docs/sound/cue-sheet.md 的代码版本）；
  * 这里只把它的指令变成 WebAudio 节点：
  *
- *   循环床 → 低通 → 增益 ─┬→ BED 母线 ──────────────────────┬→ 暂停（−6 dB）─┐
- *                         └→ 空气床母线（2.5 kHz −3 dB）──────┘                  │
- *   一次性音效 → 增益 → 声像 → SFX / 主角 / 鲸鸣 / 海鸥 / 抹香鲸 母线 ──────────────┤
- *   界面提示音 ──────────────────────────────────────────────────────────────┴→ 主增益 → 安全限幅器 → 输出
- * 各母线按导演给出的压低包络降低（AudioFrame.vo，只在有旁白时；叙事现在没有旁白）。
+ *   循环床 → 低通 → 增益 ─┬→ BED 母线（旁白时 −7 dB）────────────┬→ 暂停（−6 dB）─┐
+ *                         └→ 空气床母线（−9 dB，2.5 kHz −3 dB）───┘                  │
+ *   一次性音效 → 增益 → 声像 → SFX / 主角 / 鲸鸣 / 海鸥 / 抹香鲸 母线（各自的压低）──────┤
+ *   旁白（voiceBus，不压低）、界面提示音 ───────────────────────────────────────────────┴→ 主增益 → 安全限幅器 → 输出
  *
  * 素材按批次加载（manifest 的 batch）：0 常驻；1 开场；2 海面；3 深海；4 海床。离开对应段落后释放解码后的数据，
  * 让常驻的 PCM 不超过约 50 MB。
@@ -69,6 +68,7 @@ function wantedBatches(mode: AudioFrame['mode'], p: number): Set<number> {
 export class AudioManager {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
+  private voice: GainNode | null = null;
   private ui!: GainNode;
   private bedBus!: GainNode;
   private airBus!: GainNode;
@@ -166,7 +166,19 @@ export class AudioManager {
       filter.connect(gain).connect(AIR_BEDS.has(id) ? this.airBus : this.bedBus);
       this.beds.set(id, { id, src: null, filter, gain, silentFor: 0, startedAt: 0 });
     }
+    this.voice = ctx.createGain();
+    this.voice.connect(this.master);
     this.applyVolume();
+  }
+
+  /** 旁白的输出（见 Narration）：跟随静音与音量，不被压低、不加混响。声音解锁之前为 null */
+  get voiceBus(): AudioNode | null {
+    return this.voice;
+  }
+
+  /** 没有旁白状态（AudioFrame.vo）时的后备：旁白说话的程度 0~1 */
+  setDuck(amount: number): void {
+    this.director.externalDuck = clamp(amount);
   }
 
   /** 由 AssetRegistry 调用：登记素材清单与加载函数，加载第 0 批（常驻），返回时第 0 批已就绪 */
@@ -228,7 +240,7 @@ export class AudioManager {
 
   private applyVolume(): void {
     if (!this.ctx) return;
-    // 主增益 = 界面音量；静音时 0.25 s 归零
+    // 主增益 = 界面音量；静音时 0.25 s 归零（含旁白）
     this.master.gain.setTargetAtTime(this.muted ? 0 : this.volume, this.ctx.currentTime, 0.08);
   }
 
@@ -268,7 +280,7 @@ export class AudioManager {
     this.snap = false;
 
     this.applyBeds(plan, dt, now, snap);
-    // 压低（有旁白时）与暂停（包络已由导演按 4.3 的起落时间算好，这里只做很短的平滑）
+    // 旁白压低与暂停（包络已由导演按 4.3 的起落时间算好，这里只做很短的平滑）
     const d = plan.duck;
     const set = (param: AudioParam, v: number, tau: number) => (snap ? param.setValueAtTime(v, now) : param.setTargetAtTime(v, now, tau));
     set(this.bedBus.gain, dbToGain(DUCK_DB.bed * d), 0.03);
@@ -387,7 +399,7 @@ export class AudioManager {
     }
   }
 
-  /** “新发现”的界面提示音（UI，不属于叙事，不被压低；保留原来的三音轻钟，单独注明为合成） */
+  /** “新发现”的界面提示音（UI，不属于叙事，不被旁白压低；保留原来的三音轻钟，单独注明为合成） */
   chime(): void {
     const ctx = this.ctx;
     if (!ctx) return;

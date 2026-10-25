@@ -25,8 +25,8 @@ import {
  *  - 一次性音效：用累计进度（含圈数）判断正向越过，同一帧内越过的 cue 按先后换算成秒排程；
  *    速度比、主角间隔、旁白空档、接缝保护、倒退与跳转的淡出都在这里决定（cue sheet 1.7、4.3）；
  *  - 旁白压低：按旁白的 speaking / nextStartIn 算出 0~1 的压低包络（提前 0.15 s、0.25 s 压下，
- *    人声结束 0.4 s 后 1 s 恢复，两句间隔小于 2 s 时保持）。叙事现在没有旁白（App 不传 AudioFrame.vo）：
- *    不压低，鲸鸣也不用等旁白的空档，到触发点就唱。
+ *    人声结束 0.4 s 后 1 s 恢复，两句间隔小于 2 s 时保持）。旁白现在隐藏（config/features.ts）：
+ *    它不说话，所以不压低，鲸鸣也不用等，到触发点就唱。
  * 不用随机数：变体按序号轮换。
  */
 
@@ -135,6 +135,8 @@ export class AudioDirector {
   private voSilentFor = 99;
   /** 鲸鸣等待用：人声已经安静了多久（暂停期间不计，继续播放后重新计） */
   private callSilentFor = 99;
+  /** 没有 vo 数据时由 setDuck 提供的压低程度 */
+  externalDuck = 0;
   // 探索模式
   private exploreClock = 0;
   private exploreNextCall = 40;
@@ -286,7 +288,7 @@ export class AudioDirector {
 
   /**
    * 迟到的鲸鸣：跳转、拖动或快速滚动之后停在鲸鸣的触发点与最晚时刻之间，再按正常速度播放时补唱这一声
-   * （否则重看时只要不是正好从触发点之前开始，这一声就听不到）。每个触发点只唱一次。
+   * （否则重看时只要不是正好从触发点之前开始，这一声就听不到）。在区间里只唱一次；离开区间再回来会再唱。
    */
   private lateWhale(plan: MixPlan, f: AudioFrame, total: number, delta: number, dt: number, now: number): void {
     if (f.paused || f.vo?.speaking) return;
@@ -358,8 +360,8 @@ export class AudioDirector {
   private duckEnvelope(dt: number, f: AudioFrame): number {
     const vo = f.vo;
     if (!vo) {
-      this.duckLevel = 0;
-      return 0;
+      this.duckLevel = clamp(this.externalDuck);
+      return this.duckLevel;
     }
     if (vo.speaking) this.voSilentFor = 0;
     else this.voSilentFor += dt;

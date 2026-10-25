@@ -24,6 +24,14 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: 保留上一版的资源文件
+        # 刚部署完时浏览器或 CDN 可能还拿着旧页面 / 旧清单，旧文件还在就不会缺声音或白屏（见脚本说明）
+        run: |
+          if git fetch -q --depth 1 origin gh-pages; then
+            mkdir -p ../previous
+            git archive FETCH_HEAD | tar -x -C ../previous
+            node scripts/keep-previous-assets.mjs ../previous dist
+          fi
       - name: 发布到 gh-pages 分支
         run: |
           touch dist/.nojekyll

@@ -321,7 +321,9 @@ const TABLE: Cue[] = [
   { p: 0.202, id: 'F11', db: -18, duck: 'free', view: 'air', hero: true, label: 'Q16 喷气' },
   { p: 0.2082, id: 'F12', db: -24, duck: 'sfx', view: 'air', label: 'Q17 吸气' },
   { p: 0.218, id: 'F14', db: -22, duck: 'hero', view: 'any', hero: true, label: 'Q18 入水' },
-  { p: 0.2895, id: 'V03', db: -25, duck: 'whale', view: 'uw', hero: true, latest: 0.3, pan: 0.3, label: 'Q19 远方同伴' },
+  // 闭眼之前，这头蓝鲸一生中最后的一声（近处、略放慢、尾音渐弱）：排在“漫长的一生”这句旁白之后，眼睑在叫声渐弱时才开始合上。
+  // 之后不再安排远方同伴的鲸鸣——闭眼之后的第一声鲸鸣容易被听成这头鲸鱼自己
+  { p: 0.2425, id: 'V05', db: -18, duck: 'whale', view: 'uw', hero: true, latest: 0.2455, label: 'Q19 最后的一声' },
   { p: 0.4205, id: 'F23', db: -33, duck: 'sperm', view: 'uw', pan: -0.25, label: 'Q20 抹香鲸' },
   { p: 0.445, id: 'V02', db: -27, duck: 'whale', view: 'uw', hero: true, latest: 0.46, label: 'Q21 深海鲸鸣' },
   { p: 0.497, id: 'F15a', db: -18, duck: 'free', view: 'uw', hero: true, label: 'Q22 着地' },

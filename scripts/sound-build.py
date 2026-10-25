@@ -1064,6 +1064,20 @@ def v04(L):
     return fades(reverb_tail(y, 2.0, 1200, -13, seed=23), 0.01, 0.6)
 
 
+@recipe('V05', 'call-b-last', 0)
+def v05(L):
+    """闭眼之前，这头蓝鲸一生中最后的一声：同一声完整、缓缓下滑的 B 叫声，在近处、干净（像 V01 一样几乎不加混响）；
+    整体放慢 7%（音高略低、气息更长），结尾在约 2.5 秒里一点点弱下去，像力气慢慢用尽，最后留一点很短的水下余韵。
+    常驻（batch 0）：跳到第 3 章时也已经就绪。"""
+    y, g = whale(L, 'mb_b', 1.6, 2500, share=0.40, fout=0.05)
+    R['V05']['octave_db'] = g
+    y = resample(y, FS, FS / 0.93)
+    n = len(y)
+    t = n / FS
+    y = apply(y, env(n, [(0, 0), (t - 2.6, 0), (t - 1.2, -7), (t, -30)], db=True))
+    return fades(reverb_tail(y, 1.4, 1800, -17, seed=29), 0.01, 0.6)
+
+
 # ------------------------------------------------------------------ 主程序
 
 def measure(path: str, kind: str) -> dict:

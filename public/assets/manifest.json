@@ -47,6 +47,7 @@
     "V01": {"file": "audio/V01_call-ab-near.mp3", "batch": 1, "lufs": -18.45},
     "V02": {"file": "audio/V02_call-ab-deep.mp3", "batch": 3, "lufs": -18.45},
     "V03": {"file": "audio/V03_call-b-far.mp3", "batch": 3, "lufs": -18.45},
-    "V04": {"file": "audio/V04_call-b-mid.mp3", "batch": 4, "lufs": -18.45}
+    "V04": {"file": "audio/V04_call-b-mid.mp3", "batch": 4, "lufs": -18.45},
+    "V05": {"file": "audio/V05_call-b-last.mp3", "batch": 0, "lufs": -18.45}
   }
 }
